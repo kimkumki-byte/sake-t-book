@@ -182,6 +182,26 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     assert.equal((await call(A.sakes, { method: 'PATCH', cookie: adm, query: { id: 'abc' }, body: { name: 'x' } })).status, 400);
   });
 
+  /* ----- 술 설명 ----- */
+  await test('술 설명: 제목·본문 저장, 줄바꿈 유지, 수정·비우기', async () => {
+    const r = await call(A.sakes, { method: 'POST', cookie: adm, body: { name: '설명 테스트', desc_title: '멜론 향 가득', desc_body: '첫 줄\r\n둘째 줄\t탭' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.sake.desc_title, '멜론 향 가득'); assert.equal(r.body.sake.desc_body, '첫 줄\n둘째 줄 탭');
+    const id = String(r.body.sake.id);
+    const d = await call(A.sake, { cookie: g1, query: { id } });
+    assert.equal(d.body.sake.desc_title, '멜론 향 가득'); assert.equal(d.body.sake.desc_body, '첫 줄\n둘째 줄 탭');
+    const u = await call(A.sakes, { method: 'PATCH', cookie: adm, query: { id }, body: { name: '설명 테스트', desc_title: '', desc_body: '' } });
+    assert.equal(u.body.sake.desc_title, ''); assert.equal(u.body.sake.desc_body, '');
+    await call(A.sakes, { method: 'DELETE', cookie: adm, query: { id } });
+  });
+  await test('술 설명: 제목 41자·본문 1001자는 거절, 40자·1000자는 OK', async () => {
+    assert.equal((await call(A.sakes, { method: 'POST', cookie: adm, body: { name: 'x', desc_title: B(41) } })).status, 400);
+    assert.equal((await call(A.sakes, { method: 'POST', cookie: adm, body: { name: 'x', desc_body: B(1001) } })).status, 400);
+    const r = await call(A.sakes, { method: 'POST', cookie: adm, body: { name: 'x', desc_title: B(40), desc_body: B(1000) } });
+    assert.equal(r.status, 200);
+    await call(A.sakes, { method: 'DELETE', cookie: adm, query: { id: String(r.body.sake.id) } });
+  });
+
   /* ----- 평가 ----- */
   await test('평가 전에는 평균·리뷰가 서버에서부터 안 내려옴', async () => {
     await call(A.rate, { method: 'POST', cookie: g2, body: { sakeId: dassai, v: [4, 3, 2, 2, 4], comment: '과일향이 확' } });
@@ -503,7 +523,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   {
     const ac = cookieFrom(await call(A.auth, { method: 'POST', body: { action: 'admin', id: 'ADMIN', password: '880825' } }));
     const mk = async (b) => (await call(A.sakes, { method: 'POST', cookie: ac, body: b })).body.sake.id;
-    const s1 = await mk({ name: '닷사이 준마이다이긴조 45', brewer: '아사히주조', origin: '야마구치현' });
+    const s1 = await mk({ name: '닷사이 준마이다이긴조 45', brewer: '아사히주조', origin: '야마구치현', desc_title: '화려한 과일향의 준마이다이긴조', desc_body: '멜론과 백도 향이 먼저 올라와요.\n차게 마시면 가장 좋아요.' });
     const s2 = await mk({ name: '쿠보타 만주', brewer: '아사히주조', origin: '니가타현' });
     const s3 = await mk({ name: '핫카이산 특별본양조', brewer: '핫카이양조', origin: '니가타현' });
     const s4 = await mk({ name: '주욘다이 혼마루', brewer: '타카기주조', origin: '야마가타현' });
@@ -571,6 +591,59 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.equal(b.$('#q').value, '아사히주조');
       assert.equal(names().length, 2);
       await b.click(b.$('.searchbox .clear'));
+    });
+    await test('[상세] "더 보기" 문구 없이 양조장 · 원산지가 각각 링크', async () => {
+      await b.click(b.$$('#results .card').find((c) => /닷사이/.test(c.textContent)));
+      const links = b.$$('.inlink').map((x) => x.textContent);
+      assert.deepEqual(links, ['아사히주조', '야마구치현']);
+      assert.doesNotMatch(b.text(), /더 보기/);
+    });
+    await test('[상세] 술 설명: 제목(h3, 굵은 큰 글씨)과 본문(줄바꿈 유지)으로 나뉨', async () => {
+      const t = b.$('.desc .desc-title'), body = b.$('.desc .desc-body');
+      assert.ok(t && body);
+      assert.equal(t.tagName, 'H3'); assert.equal(t.textContent, '화려한 과일향의 준마이다이긴조');
+      assert.equal(body.textContent, '멜론과 백도 향이 먼저 올라와요.\n차게 마시면 가장 좋아요.');
+      const order = Array.from(b.$('#app').children).map((x) => x.className);
+      assert.ok(order.indexOf('desc') > order.indexOf('spec'), '설명은 정보표 아래에');
+    });
+    await test('[상세] 원산지 누르면 그 원산지 사케 모아보기 (검색 범위 "원산지")', async () => {
+      await b.click(b.$$('.inlink')[1]);
+      assert.equal(b.w.location.hash, '#/');
+      assert.equal(b.$('#q').value, '야마구치현');
+      assert.equal(b.$('.toolbar .seg button[aria-pressed="true"]').textContent, '원산지');
+      assert.deepEqual(names(), ['닷사이 준마이다이긴조 45']);
+      assert.equal(b.$('#q').placeholder, '원산지로 찾기');
+    });
+    await test('[검색] 원산지 범위로 직접 찾기 ("니가타" → 2병)', async () => {
+      const q = b.$('#q'); q.value = '니가타'; q.dispatchEvent(new b.w.Event('input', { bubbles: true })); await b.settle();
+      assert.equal(names().length, 2);
+      await b.click(b.$('.searchbox .clear'));
+      await b.click(b.$$('.toolbar .seg button').find((x) => x.textContent === '전체'));
+    });
+    await test('[상세] 설명이 없는 사케는 설명 칸이 안 보임', async () => {
+      await b.click(b.$$('#results .card').find((c) => /쿠보타/.test(c.textContent)));
+      assert.equal(b.$('.desc'), null);
+    });
+    await test('[로고] 상세 화면에도 상단 로고 줄이 있고, 누르면 홈 목록으로', async () => {
+      assert.ok(b.$('.top .brand .seal img'));
+      await b.click(b.$('.top .brand'));
+      assert.equal(b.w.location.hash, '#/');
+      assert.ok(b.$('#results'));
+    });
+    await test('[로고] "사케치북" 글자를 눌러도 홈으로, 검색어·분류 초기화', async () => {
+      await b.click(b.$$('.filters button')[1]);
+      const q = b.$('#q'); q.value = '쿠보'; q.dispatchEvent(new b.w.Event('input', { bubbles: true })); await b.settle();
+      await b.click(b.$('.top .brand h1'));
+      assert.equal(b.$('#q').value, '');
+      assert.equal(b.$('.filters button[aria-selected="true"]').textContent.replace(/\s+\d+$/, ''), '전체');
+      assert.equal(names().length, 4);
+    });
+    await test('[로고] 평가 화면에서 로고 누르면 홈으로', async () => {
+      await b.click(b.$$('#results .card').find((c) => /주욘다이/.test(c.textContent)));
+      await b.click(b.btn('내 평가 남기기'));
+      assert.match(b.w.location.hash, /\/rate$/);
+      await b.click(b.$('.top .brand'));
+      assert.equal(b.w.location.hash, '#/');
     });
     await test('[캘린더] "마신 날짜별" → 이번 달 달력과 요일 표시', async () => {
       await b.click(b.btn('마신 날짜별'));
@@ -660,6 +733,28 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       const q = o.$('#aq'); q.value = '핫카이'; q.dispatchEvent(new o.w.Event('input', { bubbles: true })); await o.settle();
       assert.deepEqual(o.$$('#alist .oprow b').map((x) => x.textContent), ['핫카이산 특별본양조']);
       assert.equal(o.$('#aq'), q);
+      assert.deepEqual(o.errors, []);
+    });
+    await test('[관리] 등록·수정 폼에 술 설명 제목/본문 칸, 저장하면 반영', async () => {
+      const o = browser(); await o.settle();
+      await o.click(o.btn('운영자 로그인'));
+      o.type('#oid', 'ADMIN'); o.type('#opw', '880825'); await o.submit('#opform');
+      assert.ok(o.$('#odt')); assert.equal(o.$('#odb').tagName, 'TEXTAREA');
+      assert.equal(o.$('#odt').maxLength, 40); assert.equal(o.$('#odb').maxLength, 1000);
+      const row = o.$$('#alist .oprow').find((r) => /핫카이산/.test(r.textContent));
+      await o.click(Array.from(row.querySelectorAll('button')).find((x) => x.textContent === '수정'));
+      await o.settle();
+      assert.equal(o.$('#odt').value, ''); assert.equal(o.$('#odb').value, '');
+      o.type('#odt', '데워 마셔도 좋은 일상주'); o.type('#odb', '깔끔하고 드라이해요.\n안주와 두루 잘 맞아요.');
+      await o.submit('#sakeform');
+      const s = store._db.sakes.find((x) => /핫카이산/.test(x.name));
+      assert.equal(s.desc_title, '데워 마셔도 좋은 일상주'); assert.equal(s.desc_body, '깔끔하고 드라이해요.\n안주와 두루 잘 맞아요.');
+      await o.click(Array.from(o.$$('#alist .oprow').find((r) => /핫카이산/.test(r.textContent)).querySelectorAll('button')).find((x) => x.textContent === '수정'));
+      await o.settle();
+      assert.equal(o.$('#odt').value, '데워 마셔도 좋은 일상주', '수정 폼에 저장된 설명이 채워져야 함');
+      o.type('#odt', '바꾸지 않을 값');
+      await o.click(o.btn('수정 취소'));
+      assert.equal(o.$('#odt').value, '');
       assert.deepEqual(o.errors, []);
     });
     await test('[화면] 분류·검색·캘린더 중 스크립트 오류 없음', async () => { assert.deepEqual(b.errors, []); });

@@ -14,7 +14,7 @@
     { n: '알콜감', lo: '부드러워요', hi: '알코올이 강해요', w: ['부드러워요', '부드러운 편이에요', '적당해요', '알코올이 느껴져요', '알코올이 강해요'] },
     { n: '여운', lo: '금방 사라져요', hi: '오래 남아요', w: ['금방 사라져요', '짧은 편이에요', '적당해요', '긴 편이에요', '오래 남아요'] }
   ];
-  var EMPTY_FORM = { id: null, name: '', rice: '', polish: '', abv: '', smv: '', acid: '', brewer: '', origin: '', tint: TINTS[0], img_url: null, image: null, clearImage: false };
+  var EMPTY_FORM = { id: null, name: '', rice: '', polish: '', abv: '', smv: '', acid: '', brewer: '', origin: '', desc_title: '', desc_body: '', tint: TINTS[0], img_url: null, image: null, clearImage: false };
 
   /* ---------- 상태 ---------- */
   var S = {
@@ -105,8 +105,8 @@
   }
 
   function topBar(sub, right) {
-    return '<div class="top"><div class="seal"><img src="/logo.png" alt=""></div>' +
-      '<h1 class="display">사케치북' + (sub ? '<span class="sub">' + sub + '</span>' : '') + '</h1>' + (right || '') + '</div>';
+    return '<div class="top"><a class="brand" href="#/" data-a="home" aria-label="사케치북 홈으로"><span class="seal"><img src="/logo.png" alt=""></span>' +
+      '<h1 class="display">사케치북' + (sub ? '<span class="sub">' + sub + '</span>' : '') + '</h1></a>' + (right || '') + '</div>';
   }
 
   /* ---------- 레이더 차트 ---------- */
@@ -176,13 +176,14 @@
 
   /* ---------- 화면: 목록 (분류·검색·캘린더) ---------- */
   var SORTS = [['new', '최근 등록순'], ['drank', '최근 마신순'], ['name', '이름순'], ['popular', '평가 많은순']];
-  var SCOPES = [['all', '전체'], ['name', '이름'], ['brewer', '양조장']];
+  var SCOPES = [['all', '전체'], ['name', '이름'], ['brewer', '양조장'], ['origin', '원산지']];
 
   function matches(s, q, scope) {
     if (!q) return true;
     var name = (s.name || '').toLowerCase(), br = (s.brewer || '').toLowerCase(), og = (s.origin || '').toLowerCase();
     if (scope === 'name') return name.indexOf(q) >= 0;
     if (scope === 'brewer') return br.indexOf(q) >= 0;
+    if (scope === 'origin') return og.indexOf(q) >= 0;
     return name.indexOf(q) >= 0 || br.indexOf(q) >= 0 || og.indexOf(q) >= 0;
   }
 
@@ -237,7 +238,7 @@
         return '<button role="tab" data-a="ftab" data-t="' + x[0] + '" aria-selected="' + (F.tab === x[0]) + '">' + x[1] + ' <span class="num">' + x[2] + '</span></button>';
       }).join('') + '</div>' +
       '<div class="searchbox"><span class="ic" aria-hidden="true"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="6"/><path d="M14 14l4 4"/></svg></span>' +
-      '<input id="q" type="search" enterkeyhint="search" autocomplete="off" placeholder="' + (F.scope === 'brewer' ? '양조장 이름으로 찾기' : F.scope === 'name' ? '사케 이름으로 찾기' : '사케 이름, 양조장, 원산지로 찾기') + '" value="' + esc(F.q) + '" aria-label="검색">' +
+      '<input id="q" type="search" enterkeyhint="search" autocomplete="off" placeholder="' + (F.scope === 'brewer' ? '양조장 이름으로 찾기' : F.scope === 'origin' ? '원산지로 찾기' : F.scope === 'name' ? '사케 이름으로 찾기' : '사케 이름, 양조장, 원산지로 찾기') + '" value="' + esc(F.q) + '" aria-label="검색">' +
       '<button class="clear" id="qclear" data-a="clearq" aria-label="검색어 지우기"' + (F.q ? '' : ' hidden') + '>×</button></div>' +
       '<div class="toolbar"><div class="seg" role="group" aria-label="검색 범위">' + SCOPES.map(function (x) {
         return '<button data-a="scope" data-s="' + x[0] + '" aria-pressed="' + (F.scope === x[0]) + '">' + x[1] + '</button>';
@@ -315,15 +316,17 @@
   }
 
   function vDetail(id) {
-    var back = '<button class="back" data-a="nav" data-h="#/">← 목록</button>';
+    var back = topBar() + '<button class="back" data-a="nav" data-h="#/">← 목록</button>';
     if (S.loadErr) return back + '<div class="panel center stack"><p class="err">' + esc(S.loadErr) + '</p><button class="btn ghost" data-a="nav" data-h="#/">목록으로</button></div>';
     var d = S.detail;
     if (!d || d.sake.id !== id) return back + '<div class="loading">불러오는 중…</div>';
     var s = d.sake;
     var h = back + '<div class="hero">' + pic(s) + '</div>';
     h += '<div class="stack" style="gap:4px"><span class="tiny">' +
-      (s.brewer ? '<button class="inlink" data-a="brewer" data-b="' + esc(s.brewer) + '">' + esc(s.brewer) + ' 사케 더 보기</button>' : '') +
-      (s.brewer && s.origin ? ' · ' : '') + esc(s.origin || '') + '</span><h2 class="display name">' + esc(s.name) + '</h2></div>';
+      (s.brewer ? '<button class="inlink" data-a="brewer" data-b="' + esc(s.brewer) + '" aria-label="' + esc(s.brewer) + ' 사케 모아보기">' + esc(s.brewer) + '</button>' : '') +
+      (s.brewer && s.origin ? ' · ' : '') +
+      (s.origin ? '<button class="inlink" data-a="origin" data-b="' + esc(s.origin) + '" aria-label="' + esc(s.origin) + ' 사케 모아보기">' + esc(s.origin) + '</button>' : '') +
+      '</span><h2 class="display name">' + esc(s.name) + '</h2></div>';
     h += '<dl class="spec" style="margin:0">' +
       specCell('원료', s.rice, null, '', true) +
       specCell('정미율', s.polish, '%') +
@@ -332,6 +335,11 @@
       specCell('산도', s.acid, '', '높을수록 신맛') +
       specCell('주조사', s.brewer, null) +
       specCell('원산지', s.origin, null) + '</dl>';
+    if (s.desc_title || s.desc_body) {
+      h += '<section class="desc" aria-label="술 설명">' +
+        (s.desc_title ? '<h3 class="desc-title">' + esc(s.desc_title) + '</h3>' : '') +
+        (s.desc_body ? '<p class="desc-body">' + esc(s.desc_body) + '</p>' : '') + '</section>';
+    }
     if (isAdmin()) h += '<button class="btn ghost" data-a="edit" data-id="' + s.id + '">사케 정보 수정</button>';
 
     if (!d.rated) {
@@ -364,12 +372,12 @@
   /* ---------- 화면: 평가 ---------- */
   function vRate(id) {
     var d = S.detail;
-    if (!d || d.sake.id !== id) return '<button class="back" data-a="nav" data-h="#/">← 목록</button><div class="loading">불러오는 중…</div>';
+    if (!d || d.sake.id !== id) return topBar() + '<button class="back" data-a="nav" data-h="#/">← 목록</button><div class="loading">불러오는 중…</div>';
     if (!S.draft || S.draft.id !== id) {
       S.draft = d.my ? { id: id, v: d.my.v.slice(), t: d.my.t, d: d.my.drank_on || todayStr() } : { id: id, v: [3, 3, 3, 3, 3], t: '', d: todayStr() };
     }
     var dr = S.draft;
-    var h = '<button class="back" data-a="nav" data-h="#/sake/' + id + '">← ' + esc(d.sake.name) + '</button>';
+    var h = topBar() + '<button class="back" data-a="nav" data-h="#/sake/' + id + '">← ' + esc(d.sake.name) + '</button>';
     h += '<div class="panel stack"><h2 class="display" style="font-size:16px">' + (d.my ? '평가 수정' : '어떤 맛이었나요?') + '</h2><div id="rchart">' + radar([{ cls: 'me', vals: dr.v }]) + '</div></div>';
     h += '<div class="field"><label for="drank">마신 날짜</label><div class="daterow"><input id="drank" type="date" value="' + esc(dr.d) + '" max="' + todayStr() + '" min="2000-01-01">' +
       '<button type="button" class="btn small ghost" data-a="drank-today">오늘</button></div><span class="tiny">"마신 날짜별" 캘린더에 이 날짜로 모여요.</span></div>';
@@ -410,6 +418,10 @@
       '<div class="grid2">' + field('opol', 'polish', '정미율 (%)', '예: 45', '', 6, 'decimal') + field('oabv', 'abv', '도수 (%)', '예: 16', '', 6, 'decimal') + '</div>' +
       '<div class="grid2">' + field('osmv', 'smv', '주도', '예: +3.0', '낮을수록 단맛 · 비워도 돼요', 7) + field('oacid', 'acid', '산도', '예: 1.4', '높을수록 신맛 · 비워도 돼요', 6, 'decimal') + '</div>' +
       '<div class="grid2">' + field('obr', 'brewer', '주조사', '예: 아사히주조', '', 60) + field('oor', 'origin', '원산지', '예: 야마구치현', '', 60) + '</div>' +
+      '<div class="formsec"><b>술 설명</b><span class="tiny">사케 상세 화면에 제목과 본문으로 나뉘어 보여요. 비워 두면 표시되지 않아요.</span></div>' +
+      field('odt', 'desc_title', '술 설명 제목', '예: 멜론 향이 퍼지는 부드러운 다이긴조', '', 40) +
+      '<div class="field"><label for="odb">술 설명</label><textarea id="odb" data-k="desc_body" maxlength="1000" rows="5" placeholder="향, 맛, 어울리는 음식, 마시기 좋은 온도 등">' + esc(S.form.desc_body) + '</textarea>' +
+      '<span class="tiny">줄바꿈은 그대로 보여요 · 최대 1000자</span></div>' +
       (S.formErr ? '<p class="err" role="alert">' + esc(S.formErr) + '</p>' : '') +
       '<button class="btn" type="submit"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? '저장 중…' : (editing ? '수정 내용 저장' : '등록하기')) + '</button></form>';
 
@@ -578,7 +590,8 @@
       var s = d.sake;
       S.form = {
         id: s.id, name: s.name || '', rice: s.rice || '', polish: s.polish || '', abv: s.abv || '', smv: s.smv || '', acid: s.acid || '',
-        brewer: s.brewer || '', origin: s.origin || '', tint: s.tint || TINTS[0], img_url: s.img_url || null, image: null, clearImage: false
+        brewer: s.brewer || '', origin: s.origin || '', desc_title: s.desc_title || '', desc_body: s.desc_body || '',
+        tint: s.tint || TINTS[0], img_url: s.img_url || null, image: null, clearImage: false
       };
       if (location.hash !== '#/admin') { location.hash = '#/admin'; } else { render(); window.scrollTo(0, 0); }
     }).catch(handleErr);
@@ -587,7 +600,7 @@
   function submitSake() {
     var f = S.form;
     if (!f.name.trim()) { S.formErr = '술 이름을 입력해 주세요.'; render(); var n = $('oname'); if (n) n.focus(); return; }
-    var body = { name: f.name, rice: f.rice, polish: f.polish, abv: f.abv, smv: f.smv, acid: f.acid, brewer: f.brewer, origin: f.origin, tint: f.tint };
+    var body = { name: f.name, rice: f.rice, polish: f.polish, abv: f.abv, smv: f.smv, acid: f.acid, brewer: f.brewer, origin: f.origin, desc_title: f.desc_title, desc_body: f.desc_body, tint: f.tint };
     if (f.image) body.image = f.image;
     else if (f.id !== null && f.clearImage) body.clearImage = true;
     var editing = f.id !== null;
@@ -658,9 +671,14 @@
       S.F.day = null; render();
     }
     else if (a === 'day') { var dv = el.getAttribute('data-d'); S.F.day = dv && S.F.day !== dv ? dv : null; render(); }
-    else if (a === 'brewer') {
-      S.F.view = 'list'; S.F.tab = 'all'; S.F.scope = 'brewer'; S.F.q = el.getAttribute('data-b') || '';
+    else if (a === 'brewer' || a === 'origin') {
+      S.F.view = 'list'; S.F.tab = 'all'; S.F.scope = a; S.F.q = el.getAttribute('data-b') || '';
       go('#/');
+    }
+    else if (a === 'home') {
+      e.preventDefault();
+      S.F.view = 'list'; S.F.tab = 'all'; S.F.q = ''; S.F.scope = 'all'; S.F.day = null; S.F.month = null; S.draft = null;
+      if (S.me && location.hash && location.hash !== '#/') go('#/'); else { render(); window.scrollTo(0, 0); }
     }
     else if (a === 'drank-today') { if (S.draft) { S.draft.d = todayStr(); var di = $('drank'); if (di) di.value = S.draft.d; } }
   });

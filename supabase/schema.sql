@@ -14,8 +14,13 @@ create table if not exists public.sakes (
   origin text not null default '',   -- 원산지
   tint text not null default '#4f7cac',
   img_url text,
+  desc_title text not null default '',  -- 술 설명 제목
+  desc_body text not null default '',   -- 술 설명 본문
   created_at timestamptz not null default now()
 );
+-- 예전에 만든 데이터베이스에 설명 칸 추가 (이미 있으면 그냥 넘어가요)
+alter table public.sakes add column if not exists desc_title text not null default '';
+alter table public.sakes add column if not exists desc_body text not null default '';
 
 -- 2) 게스트 (닉네임 + 암호화된 비밀번호)
 create table if not exists public.guests (

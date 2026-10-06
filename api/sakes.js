@@ -17,6 +17,8 @@ function readFields(b) {
     acid: v.numberText(b.acid, '산도', { min: 0, max: 20 }),
     brewer: v.text(b.brewer, 60, '주조사'),
     origin: v.text(b.origin, 60, '원산지'),
+    desc_title: v.text(b.desc_title, 40, '술 설명 제목'),
+    desc_body: v.text(b.desc_body, 1000, '술 설명', { multiline: true }),
     tint: v.tint(b.tint),
   };
 }
