@@ -183,8 +183,14 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   });
 
   /* ----- 만족도 별점 ----- */
-  await test('별점: 없거나 0·6·3.5·"4"는 거절, 1~5 정수만 저장', async () => {
-    for (const s of [undefined, 0, 6, 3.5, '4', null]) {
+  await test('별점: 반 개 단위(0.5~5)만 저장, 0·0.3·2.25·5.5·6·"4"·없음은 거절', async () => {
+    const tmp = (await call(A.sakes, { method: 'POST', cookie: adm, body: { name: '반 별 테스트' } })).body.sake.id;
+    for (const ok of [0.5, 3.5, 5, 1]) {
+      assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: tmp, v: [3, 3, 3, 3, 3], stars: ok } })).status, 200, String(ok));
+      assert.equal(store._db.ratings.find((r) => r.sake_id === tmp && r.nickname === '민수').stars, ok);
+    }
+    await call(A.sakes, { method: 'DELETE', cookie: adm, query: { id: String(tmp) } });
+    for (const s of [undefined, 0, 0.3, 2.25, 5.5, 6, '4', null]) {
       const body = { sakeId: dassai, v: [3, 3, 3, 3, 3] };
       if (s !== undefined) body.stars = s;
       assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body })).status, 400, String(s));
@@ -731,6 +737,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       const now = new Date(), z = (x) => String(x).padStart(2, '0');
       const today = now.getFullYear() + '-' + z(now.getMonth() + 1) + '-' + z(now.getDate());
       assert.equal(di.value, today); assert.equal(di.max, today);
+      assert.match(b.$('#drankText').textContent, /^\d{4}년 \d{1,2}월 \d{1,2}일 \([일월화수목금토]\)$/);
       di.value = '2999-01-01'; di.dispatchEvent(new b.w.Event('input', { bubbles: true }));
       await b.click(b.$('[data-a="star"][data-n="4"]')); await b.click(b.btn('저장하고 결과 보기'));
       assert.match(b.$('#rateerr').textContent, /미래 날짜/);
@@ -738,6 +745,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     });
     await test('[마신 날짜] 날짜 바꿔 저장 → 상세와 캘린더에 반영', async () => {
       const di = b.$('#drank'); di.value = '2026-09-03'; di.dispatchEvent(new b.w.Event('input', { bubbles: true }));
+      assert.equal(b.$('#drankText').textContent, '2026년 9월 3일 (목)', '빈 괄호 없이 요일까지');
       await b.click(b.$('[data-a="star"][data-n="4"]')); await b.click(b.btn('저장하고 결과 보기')); await b.settle();
       assert.match(b.text(), /9월 3일 \(목\)에 마셨어요/);
       await b.click(b.btn('← 목록'));
@@ -765,7 +773,8 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     await test('[별점] 별점을 안 고르면 저장 안 되고 안내', async () => {
       b.w.location.hash = '#/sake/' + s5 + '/rate'; await b.settle(); await b.settle(); await b.settle();
       assert.equal(b.$$('.starpick .st').length, 5);
-      assert.equal(b.$('#swd').textContent, '별을 눌러 골라 주세요');
+      assert.match(b.$('#swd').textContent, /별을 눌러 골라 주세요/);
+      assert.equal(b.$$('.starpick .hz').length, 10, '별마다 왼쪽(반 개)·오른쪽(한 개) 버튼');
       await b.click(b.btn('저장하고 결과 보기'));
       assert.match(b.$('#rateerr').textContent, /만족도 별점을 골라 주세요/);
       assert.match(b.w.location.hash, /\/rate$/);
@@ -774,7 +783,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       await b.click(b.$('[data-a="star"][data-n="2"]'));
       assert.equal(b.$$('.starpick .st.on').length, 2);
       assert.equal(b.$('[data-a="star"][data-n="2"]').getAttribute('aria-checked'), 'true');
-      assert.equal(b.$('#swd').textContent, '아쉬웠어요');
+      assert.equal(b.$('#swd').textContent, '2점 · 아쉬웠어요');
       assert.ok(b.$('#rateerr').hidden);
       await b.click(b.btn('저장하고 결과 보기')); await b.settle();
       assert.equal(b.w.location.hash, '#/sake/' + s5);
@@ -799,6 +808,27 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.match(card.querySelector('.mystar').textContent, /★ 2/);
       const sel = b.$('#sort'); sel.value = 'stars'; sel.dispatchEvent(new b.w.Event('change', { bubbles: true })); await b.settle();
       assert.equal(names()[names().length - 1], '야마가타 마사무네', '별 2개는 별 4개들보다 뒤');
+    });
+    await test('[별점] 반 개: 별 4개째 왼쪽 절반 → 3.5점, 저장하면 리뷰·카드에 반 별', async () => {
+      await b.click(b.$$('#results .card').find((c) => /야마가타/.test(c.textContent)));
+      await b.click(b.btn('내 평가 수정'));
+      await b.click(b.$('[data-a="star"][data-n="3.5"]'));
+      assert.equal(b.$$('.starpick .st.on').length, 3); assert.equal(b.$$('.starpick .st.half').length, 1);
+      assert.equal(b.$('.starpick .st.half').getAttribute('data-k'), '4');
+      assert.equal(b.$('#swd').textContent, '3.5점 · 좋았어요');
+      assert.equal(b.$('[data-a="star"][data-n="3.5"]').getAttribute('aria-checked'), 'true');
+      await b.click(b.btn('저장하고 결과 보기')); await b.settle();
+      assert.match(b.$('.satis').textContent, /내 만족도\s*★+\s*3\.5/);
+      const mine = b.$('.review.mine .stars.sm');
+      assert.equal(mine.querySelectorAll('.st.on').length, 3); assert.equal(mine.querySelectorAll('.st.half').length, 1);
+      assert.match(b.$('.satis').textContent, /4\.3|4\.25/, '평균 (3.5+5)/2 = 4.25');
+      await b.click(b.$('.top .brand'));
+      assert.match(b.$$('#results .card').find((c) => /야마가타/.test(c.textContent)).querySelector('.mystar').textContent, /★ 3\.5/);
+      await b.click(b.$$('#results .card').find((c) => /야마가타/.test(c.textContent)));
+      await b.click(b.btn('내 평가 수정'));
+      assert.equal(b.$$('.starpick .st.half').length, 1, '다시 열어도 반 별 유지');
+      await b.click(b.btn('취소'));
+      await b.click(b.$('.top .brand'));
     });
     await test('[이전/다음] 목록 순서대로 이동, 처음·마지막 표시, 위쪽 작은 버튼도 동작', async () => {
       const sel = b.$('#sort'); sel.value = 'name'; sel.dispatchEvent(new b.w.Event('change', { bubbles: true })); await b.settle();

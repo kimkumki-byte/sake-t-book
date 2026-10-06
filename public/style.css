@@ -288,3 +288,20 @@ h1,h2,h3{margin:0;text-wrap:balance;font-family:var(--f-body)}
 .pg b{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 button.pg:hover{background:var(--hover)}
 .pg.off{opacity:.45}
+
+/* 반 개 별점 고르기 */
+.stars.big .sw{position:relative;display:inline-block;line-height:1}
+.stars.big .sw .st{display:block;font-size:36px;padding:0 2px;color:var(--star-off)}
+.stars.big .sw .st.on{color:var(--star)}
+.stars.big .hz{position:absolute;top:0;bottom:0;width:50%;border:0;padding:0;margin:0;background:transparent;cursor:pointer;border-radius:4px}
+.stars.big .hz.l{left:0}
+.stars.big .hz.r{right:0}
+.stars.big .hz:focus-visible{outline:2px solid var(--me);outline-offset:0}
+
+/* 마신 날짜 (요일 표시) */
+.datebox{position:relative;flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--line);border-radius:8px;padding:9px 11px;background:var(--surface)}
+.datebox:focus-within{border-color:var(--me);box-shadow:0 0 0 3px var(--me-soft)}
+.datebox .dtext{font-size:14px;font-variant-numeric:tabular-nums}
+.datebox .dic{width:18px;height:18px;flex:none;fill:none;stroke:var(--muted);stroke-width:1.6;stroke-linecap:round}
+.field .datebox input,.datebox input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;border:0;padding:0;margin:0;font-size:16px;background:transparent}
+.stars.big .sw .st.half{background:linear-gradient(90deg,var(--star) 50%,var(--star-off) 50%);-webkit-background-clip:text;background-clip:text;color:transparent}

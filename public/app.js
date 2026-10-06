@@ -83,6 +83,18 @@
   function md(s) { var d = parseYmd(s); return (d.getMonth() + 1) + '월 ' + d.getDate() + '일'; }
   function mdw(s) { var d = parseYmd(s); return md(s) + ' (' + WD[d.getDay()] + ')'; }
   var STAR_WORDS = ['', '별로였어요', '아쉬웠어요', '괜찮았어요', '좋았어요', '최고였어요'];
+  function starWord(s) { return s ? s + '점 · ' + STAR_WORDS[Math.ceil(s)] : '별을 눌러 골라 주세요 (왼쪽 절반은 반 개)'; }
+  // 마신 날짜를 "2026년 10월 6일 (화)"로
+  function longDate(s) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s || '')) return '날짜를 골라 주세요';
+    var d = parseYmd(s);
+    return d.getFullYear() + '년 ' + (d.getMonth() + 1) + '월 ' + d.getDate() + '일 (' + WD[d.getDay()] + ')';
+  }
+  function setDrank(v) {
+    if (!S.draft) return;
+    S.draft.d = v;
+    var tx = $('drankText'); if (tx) tx.textContent = longDate(v);
+  }
   // 별 5개 그리기 (n: 0~5, 소수면 반 별까지)
   function starsHtml(n, cls) {
     var out = '';
@@ -426,11 +438,15 @@
     var dr = S.draft;
     var h = topBar() + '<button class="back" data-a="nav" data-h="#/sake/' + id + '">← ' + esc(d.sake.name) + '</button>';
     h += '<div class="panel stack"><h2 class="display" style="font-size:16px">' + (d.my ? '평가 수정' : '어떤 맛이었나요?') + '</h2><div id="rchart">' + radar([{ cls: 'me', vals: dr.v }]) + '</div></div>';
-    h += '<div class="panel starpick"><div class="l"><b>만족도</b><span id="swd">' + (dr.s ? STAR_WORDS[dr.s] : '별을 눌러 골라 주세요') + '</span></div>' +
-      '<div class="stars big" role="radiogroup" aria-label="만족도 별점">' + [1, 2, 3, 4, 5].map(function (n) {
-        return '<button type="button" class="st' + (dr.s >= n ? ' on' : '') + '" data-a="star" data-n="' + n + '" role="radio" aria-checked="' + (dr.s === n) + '" aria-label="별 ' + n + '개">★</button>';
+    h += '<div class="panel starpick"><div class="l"><b>만족도</b><span id="swd">' + starWord(dr.s) + '</span></div>' +
+      '<div class="stars big" role="radiogroup" aria-label="만족도 별점 (반 개 단위)">' + [1, 2, 3, 4, 5].map(function (n) {
+        return '<span class="sw"><i class="st' + (dr.s >= n ? ' on' : (dr.s >= n - 0.5 ? ' half' : '')) + '" data-k="' + n + '" aria-hidden="true">★</i>' +
+          '<button type="button" class="hz l" data-a="star" data-n="' + (n - 0.5) + '" role="radio" aria-checked="' + (dr.s === n - 0.5) + '" aria-label="별 ' + (n - 0.5) + '개"></button>' +
+          '<button type="button" class="hz r" data-a="star" data-n="' + n + '" role="radio" aria-checked="' + (dr.s === n) + '" aria-label="별 ' + n + '개"></button></span>';
       }).join('') + '</div><span class="tiny">맛 점수와 따로, 전체적으로 얼마나 만족스러웠는지 골라 주세요.</span></div>';
-    h += '<div class="field"><label for="drank">마신 날짜</label><div class="daterow"><input id="drank" type="date" value="' + esc(dr.d) + '" max="' + todayStr() + '" min="2000-01-01">' +
+    h += '<div class="field"><label for="drank">마신 날짜</label><div class="daterow"><div class="datebox"><span class="dtext" id="drankText">' + longDate(dr.d) + '</span>' +
+      '<svg class="dic" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12" rx="2"/><path d="M3 8.5h14M7 3v3M13 3v3"/></svg>' +
+      '<input id="drank" type="date" value="' + esc(dr.d) + '" max="' + todayStr() + '" min="2000-01-01"></div>' +
       '<button type="button" class="btn small ghost" data-a="drank-today">오늘</button></div><span class="tiny">"마신 날짜별" 캘린더에 이 날짜로 모여요.</span></div>';
     h += '<div class="panel" style="padding-block:6px">' + ITEMS.map(function (it, i) {
       return '<div class="rate"><div class="l"><b>' + it.n + '</b><span id="w' + i + '">' + it.w[dr.v[i] - 1] + '</span></div>' +
@@ -621,7 +637,7 @@
     if (charLen(dr.t.trim()) > 50) { er.textContent = '한줄평은 50자 이내로 써 주세요.'; er.hidden = false; return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dr.d || '')) { er.textContent = '마신 날짜를 골라 주세요.'; er.hidden = false; return; }
     if (dr.d > todayStr()) { er.textContent = '미래 날짜는 고를 수 없어요.'; er.hidden = false; return; }
-    if (!(dr.s >= 1 && dr.s <= 5)) { er.textContent = '만족도 별점을 골라 주세요.'; er.hidden = false; var sp = document.querySelector('.starpick'); if (sp && sp.scrollIntoView) sp.scrollIntoView({ block: 'center' }); return; }
+    if (!(dr.s >= 0.5 && dr.s <= 5)) { er.textContent = '만족도 별점을 골라 주세요.'; er.hidden = false; var sp = document.querySelector('.starpick'); if (sp && sp.scrollIntoView) sp.scrollIntoView({ block: 'center' }); return; }
     S.busy = true; render();
     api('/api/rate', { method: 'POST', body: { sakeId: id, v: dr.v, comment: dr.t.trim(), drankOn: dr.d, stars: dr.s } })
       .then(function () {
@@ -735,16 +751,20 @@
     }
     else if (a === 'star') {
       if (!S.draft) return;
-      S.draft.s = +el.getAttribute('data-n');
-      document.querySelectorAll('.starpick .st').forEach(function (b) {
-        var n = +b.getAttribute('data-n');
-        b.classList.toggle('on', n <= S.draft.s);
-        b.setAttribute('aria-checked', String(n === S.draft.s));
+      var sv = parseFloat(el.getAttribute('data-n'));
+      S.draft.s = sv;
+      document.querySelectorAll('.starpick .st').forEach(function (st) {
+        var k = +st.getAttribute('data-k');
+        st.classList.toggle('on', sv >= k);
+        st.classList.toggle('half', sv < k && sv >= k - 0.5);
       });
-      var w = $('swd'); if (w) w.textContent = STAR_WORDS[S.draft.s];
+      document.querySelectorAll('.starpick .hz').forEach(function (hb) {
+        hb.setAttribute('aria-checked', String(parseFloat(hb.getAttribute('data-n')) === sv));
+      });
+      var w = $('swd'); if (w) w.textContent = starWord(sv);
       var er = $('rateerr'); if (er) er.hidden = true;
     }
-    else if (a === 'drank-today') { if (S.draft) { S.draft.d = todayStr(); var di = $('drank'); if (di) di.value = S.draft.d; } }
+    else if (a === 'drank-today') { if (S.draft) { setDrank(todayStr()); var di = $('drank'); if (di) di.value = S.draft.d; } }
   });
 
   document.addEventListener('submit', function (e) {
@@ -776,7 +796,7 @@
       S.aq = t.value;
       var al = $('alist'); if (al) al.innerHTML = adminListHtml();
     } else if (t.id === 'drank' && S.draft) {
-      S.draft.d = t.value;
+      setDrank(t.value);
     } else if (t.getAttribute('data-k')) {
       S.form[t.getAttribute('data-k')] = t.value;
     }
@@ -785,12 +805,19 @@
   document.addEventListener('change', function (e) {
     var t = e.target;
     if (t.id === 'sort') { S.F.sort = t.value; var r = $('results'); if (r) r.innerHTML = resultsHtml(); return; }
-    if (t.id === 'drank' && S.draft) { S.draft.d = t.value; return; }
+    if (t.id === 'drank' && S.draft) { setDrank(t.value); return; }
     if (t.id === 'oimg' && t.files && t.files[0]) {
       shrinkImage(t.files[0]).then(function (url) {
         S.form.image = url; S.form.clearImage = false; S.formErr = '';
         render();
       }).catch(function (err) { S.formErr = err.message; t.value = ''; render(); });
+    }
+  });
+
+  // PC에서 날짜 칸 아무 데나 눌러도 달력이 열리게
+  document.addEventListener('click', function (e) {
+    if (e.target && e.target.id === 'drank' && typeof e.target.showPicker === 'function') {
+      try { e.target.showPicker(); } catch (err) { /* 지원 안 하면 기본 동작 */ }
     }
   });
 
