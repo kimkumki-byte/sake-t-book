@@ -423,3 +423,9 @@ body.has-tabbar .toast{bottom:calc(84px + env(safe-area-inset-bottom,0px))}
 .wish.on{color:#e0426a;border-color:#f3c2cf;background:#fff5f8}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .wish.on{background:#3a1d26;border-color:#6b2b3d;color:#ff7a9a}}
 :root[data-theme="dark"] .wish.on{background:#3a1d26;border-color:#6b2b3d;color:#ff7a9a}
+
+/* 운영자 인증 마크: 닉네임 글자 높이에 맞춤 */
+.opv{display:inline-flex;width:1.05em;height:1.05em;margin-left:.22em;vertical-align:-.17em;flex:none}
+.opv svg{width:100%;height:100%;display:block}
+.review .head .opv,.friend .opv,.mytop .opv{margin-left:-2px}
+.mytop .opv{font-size:20px;margin-left:0}

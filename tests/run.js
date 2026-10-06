@@ -387,7 +387,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     await op.submit('#opform');
     assert.ok(op.w.location.hash === '#/' || op.w.location.hash === '', '운영자 첫 화면은 홈');
     assert.ok(op.$('.lvcard')); assert.ok(op.$('.tabbar'));
-    assert.match(op.text(), /아무개/); assert.ok(op.$('.lvcard .chip.op'));
+    assert.match(op.text(), /아무개/); assert.ok(op.$('.lvcard .opv'));
     await op.tab('테이스팅');
     assert.match(op.text(), /관리 화면에서 첫 사케를 등록해 주세요/);
     await op.toAdmin();
@@ -474,7 +474,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     await op.settle();
     assert.equal(op.w.location.hash, '#/sake/' + kubota);
     assert.match(op.text(), /내 평가 vs 평균/); assert.match(op.text(), /리뷰 1/);
-    assert.ok(op.$('.review.mine .chip.op')); assert.match(op.$('.review').textContent, /드라이하고 깔끔/);
+    assert.ok(op.$('.review.mine .opv')); assert.match(op.$('.review').textContent, /드라이하고 깔끔/);
     assert.match(op.$('.review .date').textContent, /^\d+월 \d+일 \d{2}:\d{2}$/);
     assert.equal(op.$$('.review .scores').length, 0, '리뷰에 점수 칩이 없어야 함');
   });
@@ -1291,7 +1291,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.ok(o.$('[data-h="#/admin"]'));
       assert.match(o.text(), /Vercel 설정/);
       assert.equal(o.$('[data-a="acct"]'), null);
-      assert.ok(o.$('.mytop .chip.op'));
+      assert.ok(o.$('.mytop .opv'));
       await o.toAdmin();
       assert.equal(o.$('.tabbar .tb.on').textContent.trim(), 'MY');
       assert.ok(o.btn('← MY'));

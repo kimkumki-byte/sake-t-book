@@ -141,8 +141,10 @@
   function pic(s) {
     return s.img_url ? '<img src="' + esc(s.img_url) + '" alt="" loading="lazy">' : bottle(s.tint);
   }
+  // 운영자 표시: 닉네임 옆 파란 인증 마크
+  var OP_MARK = '<span class="opv" role="img" aria-label="운영자" title="운영자"><svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12.00,0.50 14.41,3.02 17.75,2.04 18.58,5.42 21.96,6.25 20.98,9.59 23.50,12.00 20.98,14.41 21.96,17.75 18.58,18.58 17.75,21.96 14.41,20.98 12.00,23.50 9.59,20.98 6.25,21.96 5.42,18.58 2.04,17.75 3.02,14.41 0.50,12.00 3.02,9.59 2.04,6.25 5.42,5.42 6.25,2.04 9.59,3.02" fill="#45a5f5"/><path d="M7.6 12.3l2.9 2.9 5.9-5.8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="square"/></svg></span>';
   function badge(nick) {
-    return nick === S.adminNick ? '<span class="chip op">운영자</span>' : '';
+    return nick === S.adminNick ? OP_MARK : '';
   }
 
   function topBar(sub, right) {
@@ -627,7 +629,7 @@
       : '<div class="panel muted center">아직 별점이 남겨진 사케가 없어요.</div>';
     h += '<div class="sec"><h2>친구들의 최근 시음</h2></div>';
     h += d.feed.length ? '<div class="feed">' + d.feed.map(function (f) {
-      return '<button class="fitem" data-a="nav" data-h="#/sake/' + f.sake.id + '"><span class="ft"><b>' + esc(f.nick) + '</b>' + (f.admin ? '<span class="chip op">운영자</span>' : '') +
+      return '<button class="fitem" data-a="nav" data-h="#/sake/' + f.sake.id + '"><span class="ft"><b>' + esc(f.nick) + '</b>' + (f.admin ? OP_MARK : '') +
         '님이 <b>' + esc(f.sake.name) + '</b>' + josa(f.sake.name, '을', '를') + ' 평가했어요</span><span class="tiny num">' + ago(f.at) + '</span></button>';
     }).join('') + '</div>' : '<div class="panel muted center">아직 친구들의 기록이 없어요.</div>';
     return h;
@@ -739,7 +741,7 @@
     h += '<div class="sec"><h2>별점이 비슷한 친구</h2></div>';
     h += d.friends.length
       ? '<div class="list">' + d.friends.map(function (f) {
-          return '<div class="friend"><b>' + esc(f.nick) + '</b>' + (f.admin ? '<span class="chip op">운영자</span>' : '') +
+          return '<div class="friend"><b>' + esc(f.nick) + '</b>' + (f.admin ? OP_MARK : '') +
             '<span class="tiny num">함께 마신 사케 ' + f.common + '병</span><span class="match num">일치도 ' + f.match + '%</span></div>';
         }).join('') + '</div><p class="tiny" style="margin:0">같은 사케에 준 별점이 비슷할수록 일치도가 높아요.</p>'
       : '<div class="panel muted center">아직 비교할 친구가 없어요.<br><span class="tiny">같은 사케를 2병 이상 함께 평가한 친구가 생기면 보여요.</span></div>';
