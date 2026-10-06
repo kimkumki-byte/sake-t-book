@@ -619,20 +619,20 @@
         ? '<button class="todo" data-a="todo"><span>아직 안 마신 사케 <b class="num">' + d.todo + '병</b></span><span class="go">평가하러 가기 ›</span></button>'
         : '<div class="todo done"><span>등록된 사케를 모두 평가했어요</span></div>';
     }
-    h += '<div class="sec"><h2>새로 들어온 사케</h2>' + (d.fresh.length ? '<button class="link" data-a="nav" data-h="#/tasting">전체 ›</button>' : '') + '</div>';
+    h += '<section class="hsec"><div class="sec"><h2>새로 들어온 사케</h2>' + (d.fresh.length ? '<button class="link" data-a="nav" data-h="#/tasting">전체 ›</button>' : '') + '</div>';
     h += d.fresh.length ? '<div class="hscroll">' + d.fresh.map(function (s) {
       return '<button class="fcard" data-a="nav" data-h="#/sake/' + s.id + '"><span class="pic">' + pic(s) + (s.is_new ? '<span class="newtag">NEW</span>' : '') + '</span>' +
         '<b>' + esc(s.name) + '</b><span class="tiny">' + esc(s.brewer || ' ') + (s.rated ? ' · 마심' : '') + '</span></button>';
     }).join('') + '</div>' : '<div class="panel muted center">아직 등록된 사케가 없어요.</div>';
-    h += '<div class="sec"><h2>테이스팅 랭킹 TOP 3</h2><button class="link" data-a="ranktop">전체 ›</button></div>';
+    h += '</section><section class="hsec"><div class="sec"><h2>테이스팅 랭킹 TOP 3</h2><button class="link" data-a="ranktop">전체 ›</button></div>';
     h += d.top.items.length ? '<div class="list">' + d.top.items.map(rankRow).join('') + '</div>'
       : '<div class="panel muted center">아직 별점이 남겨진 사케가 없어요.</div>';
-    h += '<div class="sec"><h2>친구들의 최근 시음</h2></div>';
+    h += '</section><section class="hsec"><div class="sec"><h2>친구들의 최근 시음</h2></div>';
     h += d.feed.length ? '<div class="feed">' + d.feed.map(function (f) {
       return '<button class="fitem" data-a="nav" data-h="#/sake/' + f.sake.id + '"><span class="ft"><b>' + esc(f.nick) + '</b>' + (f.admin ? OP_MARK : '') +
         '님이 <b>' + esc(f.sake.name) + '</b>' + josa(f.sake.name, '을', '를') + ' 평가했어요</span><span class="tiny num">' + ago(f.at) + '</span></button>';
     }).join('') + '</div>' : '<div class="panel muted center">아직 친구들의 기록이 없어요.</div>';
-    return h;
+    return h + '</section>';
   }
 
   /* ---------- 화면: 랭킹 ---------- */

@@ -429,3 +429,9 @@ body.has-tabbar .toast{bottom:calc(84px + env(safe-area-inset-bottom,0px))}
 .opv svg{width:100%;height:100%;display:block}
 .review .head .opv,.friend .opv,.mytop .opv{margin-left:-2px}
 .mytop .opv{font-size:20px;margin-left:0}
+
+/* 홈 섹션 구분: 섹션 사이를 넓게, 제목은 조금 더 또렷하게 */
+.hsec{display:flex;flex-direction:column;gap:10px;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}
+.hsec .sec{padding-top:0}
+.hsec .sec h2{font-size:16px;font-weight:700;letter-spacing:-.01em}
+.lvcard + .todo{margin-top:-2px}
