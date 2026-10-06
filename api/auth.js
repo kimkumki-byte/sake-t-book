@@ -1,0 +1,67 @@
+// 가입, 로그인, 운영자 로그인, 로그아웃
+const bcrypt = require('bcryptjs');
+const store = require('../lib/store');
+const v = require('../lib/validate');
+const { HttpError, handler, send } = require('../lib/http');
+const { adminConfig, safeEqual, setSession, clearSession } = require('../lib/auth');
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+module.exports = handler(['POST'], async (req, res) => {
+  const { action } = req.body;
+  const admin = adminConfig();
+
+  if (action === 'logout') {
+    clearSession(req, res);
+    return send(res, 200, { ok: true });
+  }
+
+  if (action === 'signup') {
+    const nick = v.nickname(req.body.nickname);
+    const pw = v.password(req.body.password);
+    const lower = nick.toLowerCase();
+    // 운영자 닉네임/아이디는 게스트가 쓸 수 없어요
+    if (lower === admin.nick.toLowerCase() || lower === admin.id.toLowerCase()) {
+      throw new HttpError(409, '이미 쓰고 있는 닉네임이에요. 다른 닉네임을 써 주세요.');
+    }
+    const hash = await bcrypt.hash(pw, 10);
+    try {
+      await store.createGuest(nick, hash);
+    } catch (e) {
+      if (e.code === 'DUP') throw new HttpError(409, '이미 쓰고 있는 닉네임이에요. 다른 닉네임을 써 주세요.');
+      throw e;
+    }
+    setSession(req, res, { role: 'guest', nick });
+    return send(res, 200, { ok: true, role: 'guest', nickname: nick });
+  }
+
+  if (action === 'login') {
+    const nick = String(req.body.nickname || '').trim();
+    const pw = String(req.body.password || '');
+    const guest = nick ? await store.getGuest(nick) : null;
+    // 닉네임이 없어도 같은 시간이 걸리도록 비교를 한 번은 해요
+    const ok = await bcrypt.compare(pw, guest ? guest.pw_hash : '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvali');
+    if (!guest || !ok) {
+      await wait(400);
+      throw new HttpError(401, '닉네임 또는 비밀번호가 맞지 않아요.');
+    }
+    setSession(req, res, { role: 'guest', nick: guest.nickname });
+    return send(res, 200, { ok: true, role: 'guest', nickname: guest.nickname });
+  }
+
+  if (action === 'admin') {
+    if (!admin.pw) throw new HttpError(503, '운영자 비밀번호가 서버에 설정되지 않았어요.');
+    const id = String(req.body.id || '').trim();
+    const pw = String(req.body.password || '');
+    const okId = safeEqual(id, admin.id);
+    const okPw = safeEqual(pw, admin.pw);
+    if (!(okId && okPw)) {
+      await wait(400);
+      throw new HttpError(401, '아이디 또는 비밀번호가 맞지 않아요.');
+    }
+    setSession(req, res, { role: 'admin', nick: admin.nick });
+    return send(res, 200, { ok: true, role: 'admin', nickname: admin.nick });
+  }
+
+  throw new HttpError(400, '알 수 없는 요청이에요.');
+});
