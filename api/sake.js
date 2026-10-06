@@ -17,13 +17,18 @@ module.exports = handler(['GET'], async (req, res) => {
   if (!mine) return send(res, 200, base);
 
   const avg = [0, 1, 2, 3, 4].map((i) => rows.reduce((a, r) => a + r.v[i], 0) / rows.length);
+  // 별점은 별점을 남긴 사람만으로 평균 (예전 평가에는 별점이 없을 수 있어요)
+  const starred = rows.filter((r) => Number.isInteger(r.stars));
+  const avg_stars = starred.length ? starred.reduce((a, r) => a + r.stars, 0) / starred.length : null;
   const adminNick = adminConfig().nick;
   return send(res, 200, {
     ...base,
-    my: { v: mine.v, t: mine.comment || '', at: mine.updated_at, drank_on: mine.drank_on },
+    my: { v: mine.v, t: mine.comment || '', at: mine.updated_at, drank_on: mine.drank_on, stars: mine.stars ?? null },
     avg,
+    avg_stars,
+    stars_n: starred.length,
     reviews: rows.map((r) => ({
-      nick: r.nickname, t: r.comment || '', at: r.updated_at,
+      nick: r.nickname, t: r.comment || '', at: r.updated_at, stars: r.stars ?? null,
       mine: r.nickname === me.nick, admin: r.nickname === adminNick,
     })),
   });

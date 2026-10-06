@@ -82,6 +82,13 @@
   function parseYmd(s) { var p = String(s).split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
   function md(s) { var d = parseYmd(s); return (d.getMonth() + 1) + '월 ' + d.getDate() + '일'; }
   function mdw(s) { var d = parseYmd(s); return md(s) + ' (' + WD[d.getDay()] + ')'; }
+  var STAR_WORDS = ['', '별로였어요', '아쉬웠어요', '괜찮았어요', '좋았어요', '최고였어요'];
+  // 별 5개 그리기 (n: 0~5, 소수면 반 별까지)
+  function starsHtml(n, cls) {
+    var out = '';
+    for (var i = 1; i <= 5; i++) out += '<i class="st' + (n >= i ? ' on' : (n >= i - 0.5 ? ' half' : '')) + '" aria-hidden="true">★</i>';
+    return '<span class="stars' + (cls ? ' ' + cls : '') + '" role="img" aria-label="별점 ' + (Math.round(n * 10) / 10) + '점">' + out + '</span>';
+  }
   function isAdmin() { return S.me && S.me.role === 'admin'; }
 
   var toastTimer;
@@ -175,7 +182,7 @@
   }
 
   /* ---------- 화면: 목록 (분류·검색·캘린더) ---------- */
-  var SORTS = [['new', '최근 등록순'], ['drank', '최근 마신순'], ['name', '이름순'], ['popular', '평가 많은순']];
+  var SORTS = [['new', '최근 등록순'], ['drank', '최근 마신순'], ['stars', '내 별점순'], ['name', '이름순'], ['popular', '평가 많은순']];
   var SCOPES = [['all', '전체'], ['name', '이름'], ['brewer', '양조장'], ['origin', '원산지']];
 
   function matches(s, q, scope) {
@@ -194,12 +201,17 @@
       if (F.tab === 'todo' && s.rated) return false;
       return matches(s, q, F.scope);
     });
+    return sortList(list);
+  }
+
+  function sortList(list) {
     var by = {
+      stars: function (x, y) { return (y.stars || 0) - (x.stars || 0) || x.name.localeCompare(y.name, 'ko'); },
       name: function (x, y) { return x.name.localeCompare(y.name, 'ko'); },
       popular: function (x, y) { return y.n - x.n || x.name.localeCompare(y.name, 'ko'); },
       drank: function (x, y) { return (y.drank_on || '').localeCompare(x.drank_on || '') || (y.created_at || '').localeCompare(x.created_at || ''); },
       'new': function (x, y) { return (y.created_at || '').localeCompare(x.created_at || '') || y.id - x.id; }
-    }[F.sort] || null;
+    }[S.F.sort] || null;
     return by ? list.slice().sort(by) : list;
   }
 
@@ -207,6 +219,7 @@
     return '<button class="card" data-a="nav" data-h="#/sake/' + s.id + '"><span class="pic">' + pic(s) + '</span><span class="body">' +
       '<span class="tiny">' + esc(s.brewer || ' ') + '</span><h3>' + esc(s.name) + '</h3>' +
       '<span class="row"><span class="chip ' + (s.rated ? 'done' : '') + '">' + (s.rated ? (s.drank_on ? md(s.drank_on) + ' 마심' : '평가 완료') : '평가 전') + '</span>' +
+      (s.rated && s.stars ? '<span class="mystar num" aria-label="내 별점 ' + s.stars + '점">★ ' + s.stars + '</span>' : '') +
       '<span class="tiny num">' + s.n + '명</span></span></span></button>';
   }
 
@@ -315,13 +328,43 @@
       (has ? esc(value) + (unit || '') : '—') + (hint ? '<span class="hint">' + hint + '</span>' : '') + '</dd></div>';
   }
 
+  // 이전 술 / 다음 술: 목록에서 보던 분류·검색·정렬 순서를 그대로 따라가요
+  function neighbors(id) {
+    if (!S.sakes) return null;
+    var list = filtered();
+    if (!list.some(function (x) { return x.id === id; })) list = sortList(S.sakes.slice());
+    var i = -1;
+    list.forEach(function (x, j) { if (x.id === id) i = j; });
+    if (i < 0) return null;
+    return { prev: list[i - 1] || null, next: list[i + 1] || null, pos: i + 1, total: list.length };
+  }
+
+  function pagerMini(nb) {
+    if (!nb || nb.total < 2) return '';
+    return '<span class="pmini">' +
+      '<button class="iconbtn" data-a="nav" data-h="' + (nb.prev ? '#/sake/' + nb.prev.id : '') + '" aria-label="이전 술"' + (nb.prev ? '' : ' disabled') + '>‹</button>' +
+      '<span class="tiny num">' + nb.pos + ' / ' + nb.total + '</span>' +
+      '<button class="iconbtn" data-a="nav" data-h="' + (nb.next ? '#/sake/' + nb.next.id : '') + '" aria-label="다음 술"' + (nb.next ? '' : ' disabled') + '>›</button></span>';
+  }
+
+  function pagerBottom(nb) {
+    if (!nb || nb.total < 2) return '';
+    function one(x, dir) {
+      var label = dir === 'prev' ? '‹ 이전 술' : '다음 술 ›';
+      if (!x) return '<span class="pg ' + dir + ' off"><span class="tiny">' + label + '</span><b>' + (dir === 'prev' ? '처음이에요' : '마지막이에요') + '</b></span>';
+      return '<button class="pg ' + dir + '" data-a="nav" data-h="#/sake/' + x.id + '"><span class="tiny">' + label + '</span><b>' + esc(x.name) + '</b></button>';
+    }
+    return '<nav class="pager" aria-label="이전 술, 다음 술">' + one(nb.prev, 'prev') + one(nb.next, 'next') + '</nav>';
+  }
+
   function vDetail(id) {
     var back = topBar() + '<button class="back" data-a="nav" data-h="#/">← 목록</button>';
     if (S.loadErr) return back + '<div class="panel center stack"><p class="err">' + esc(S.loadErr) + '</p><button class="btn ghost" data-a="nav" data-h="#/">목록으로</button></div>';
     var d = S.detail;
     if (!d || d.sake.id !== id) return back + '<div class="loading">불러오는 중…</div>';
-    var s = d.sake;
-    var h = back + '<div class="hero">' + pic(s) + '</div>';
+    var s = d.sake, nb = neighbors(id);
+    var h = topBar() + '<div class="navrow"><button class="back" data-a="nav" data-h="#/">← 목록</button>' + pagerMini(nb) + '</div>' +
+      '<div class="hero">' + pic(s) + '</div>';
     h += '<div class="stack" style="gap:4px"><span class="tiny">' +
       (s.brewer ? '<button class="inlink" data-a="brewer" data-b="' + esc(s.brewer) + '" aria-label="' + esc(s.brewer) + ' 사케 모아보기">' + esc(s.brewer) + '</button>' : '') +
       (s.brewer && s.origin ? ' · ' : '') +
@@ -345,12 +388,16 @@
     if (!d.rated) {
       return h + '<div class="panel lock"><div class="ic" aria-hidden="true">&#128274;</div><h3>평균과 리뷰는 평가 후에 열려요</h3>' +
         '<p class="tiny" style="margin:0">먼저 내 입맛대로 평가해야 다른 사람 영향 없이 비교할 수 있어요.<br>지금 ' + d.n + '명이 평가했어요.</p>' +
-        '<button class="btn" data-a="nav" data-h="#/sake/' + s.id + '/rate">내 평가 남기기</button></div>';
+        '<button class="btn" data-a="nav" data-h="#/sake/' + s.id + '/rate">내 평가 남기기</button></div>' + pagerBottom(nb);
     }
 
     var my = d.my.v, a = d.avg;
     h += '<div class="panel stack"><div class="sec"><h2>내 평가 vs 평균</h2><span class="tiny num">나 포함 ' + d.n + '명</span></div>' +
       (d.my.drank_on ? '<p class="tiny" style="margin:-8px 0 0">' + mdw(d.my.drank_on) + '에 마셨어요</p>' : '') +
+      '<div class="satis"><div><span class="tiny">내 만족도</span>' +
+        (d.my.stars ? '<span class="sv">' + starsHtml(d.my.stars) + '<b class="num">' + d.my.stars + '</b></span>' : '<span class="tiny">별점 없음</span>') + '</div>' +
+      '<div><span class="tiny">평균 만족도' + (d.stars_n ? ' (' + d.stars_n + '명)' : '') + '</span>' +
+        (d.avg_stars != null ? '<span class="sv">' + starsHtml(d.avg_stars) + '<b class="num">' + f1(d.avg_stars) + '</b></span>' : '<span class="tiny">아직 없어요</span>') + '</div></div>' +
       radar([{ cls: 'avg', vals: a }, { cls: 'me', vals: my }]) +
       '<div class="legend"><span><i></i>내 평가</span><span><i class="avg"></i>전체 평균</span></div>' +
       '<div class="cmp">' + ITEMS.map(function (it, i) {
@@ -363,10 +410,10 @@
     h += '<div class="sec"><h2>리뷰 ' + d.reviews.length + '</h2></div><div class="list">' +
       d.reviews.slice().sort(function (x, y) { return (y.mine ? 1 : 0) - (x.mine ? 1 : 0); }).map(function (r) {
         return '<article class="review' + (r.mine ? ' mine' : '') + '"><div class="head"><b>' + esc(r.nick) + '</b>' + badge(r.nick) +
-          (r.mine ? '<span class="chip done">나</span>' : '') + '<span class="date num">' + stamp(r.at) + '</span></div>' +
+          (r.mine ? '<span class="chip done">나</span>' : '') + (r.stars ? starsHtml(r.stars, 'sm') : '') + '<span class="date num">' + stamp(r.at) + '</span></div>' +
           '<p>' + (r.t ? esc(r.t) : '<span class="muted">한줄평이 없어요</span>') + '</p></article>';
       }).join('') + '</div>';
-    return h;
+    return h + pagerBottom(nb);
   }
 
   /* ---------- 화면: 평가 ---------- */
@@ -374,11 +421,15 @@
     var d = S.detail;
     if (!d || d.sake.id !== id) return topBar() + '<button class="back" data-a="nav" data-h="#/">← 목록</button><div class="loading">불러오는 중…</div>';
     if (!S.draft || S.draft.id !== id) {
-      S.draft = d.my ? { id: id, v: d.my.v.slice(), t: d.my.t, d: d.my.drank_on || todayStr() } : { id: id, v: [3, 3, 3, 3, 3], t: '', d: todayStr() };
+      S.draft = d.my ? { id: id, v: d.my.v.slice(), t: d.my.t, d: d.my.drank_on || todayStr(), s: d.my.stars || 0 } : { id: id, v: [3, 3, 3, 3, 3], t: '', d: todayStr(), s: 0 };
     }
     var dr = S.draft;
     var h = topBar() + '<button class="back" data-a="nav" data-h="#/sake/' + id + '">← ' + esc(d.sake.name) + '</button>';
     h += '<div class="panel stack"><h2 class="display" style="font-size:16px">' + (d.my ? '평가 수정' : '어떤 맛이었나요?') + '</h2><div id="rchart">' + radar([{ cls: 'me', vals: dr.v }]) + '</div></div>';
+    h += '<div class="panel starpick"><div class="l"><b>만족도</b><span id="swd">' + (dr.s ? STAR_WORDS[dr.s] : '별을 눌러 골라 주세요') + '</span></div>' +
+      '<div class="stars big" role="radiogroup" aria-label="만족도 별점">' + [1, 2, 3, 4, 5].map(function (n) {
+        return '<button type="button" class="st' + (dr.s >= n ? ' on' : '') + '" data-a="star" data-n="' + n + '" role="radio" aria-checked="' + (dr.s === n) + '" aria-label="별 ' + n + '개">★</button>';
+      }).join('') + '</div><span class="tiny">맛 점수와 따로, 전체적으로 얼마나 만족스러웠는지 골라 주세요.</span></div>';
     h += '<div class="field"><label for="drank">마신 날짜</label><div class="daterow"><input id="drank" type="date" value="' + esc(dr.d) + '" max="' + todayStr() + '" min="2000-01-01">' +
       '<button type="button" class="btn small ghost" data-a="drank-today">오늘</button></div><span class="tiny">"마신 날짜별" 캘린더에 이 날짜로 모여요.</span></div>';
     h += '<div class="panel" style="padding-block:6px">' + ITEMS.map(function (it, i) {
@@ -400,7 +451,7 @@
   function vAdmin() {
     var f = S.form, editing = f.id !== null;
     var h = topBar(esc(S.me.nickname) + ' ' + badge(S.me.nickname) + ' · 사케 관리',
-      '<button class="link" data-a="nav" data-h="#/">시음하기</button><button class="link" data-a="logout">로그아웃</button>');
+      '<button class="link" data-a="logout">로그아웃</button>');
     var prev = f.image ? '<img src="' + f.image + '" alt="">' : (f.img_url && !f.clearImage ? '<img src="' + esc(f.img_url) + '" alt="">' : bottle(f.tint));
     var usingTemp = !f.image && (!f.img_url || f.clearImage);
     h += '<form class="panel stack" id="sakeform" novalidate>' +
@@ -505,6 +556,7 @@
       if (r.name === 'detail') S.draft = null;
       render();
       loadDetail(r.id);
+      if (r.name === 'detail' && !S.sakes) loadSakes();
     }
   }
 
@@ -538,10 +590,10 @@
     S.me = { role: d.role, nickname: d.nickname };
     S.authErr = ''; S.showOpLogin = false; S.busy = false; S.authTab = 'login';
     S.sakes = null; S.detail = null; S.draft = null; S.form = clone(EMPTY_FORM);
-    if (d.role === 'admin' && location.hash !== '#/admin') location.hash = '#/admin';
-    else if (d.role !== 'admin' && location.hash !== '#/' && location.hash !== '') location.hash = '#/';
+    // 운영자·게스트 모두 첫 화면은 사케 목록
+    if (location.hash !== '#/' && location.hash !== '') location.hash = '#/';
     else onRoute();
-    if (d.role !== 'admin') toast(d.nickname + '님, 반가워요');
+    toast(d.nickname + '님, 반가워요');
   }
 
   function submitAuth() {
@@ -569,8 +621,9 @@
     if (charLen(dr.t.trim()) > 50) { er.textContent = '한줄평은 50자 이내로 써 주세요.'; er.hidden = false; return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dr.d || '')) { er.textContent = '마신 날짜를 골라 주세요.'; er.hidden = false; return; }
     if (dr.d > todayStr()) { er.textContent = '미래 날짜는 고를 수 없어요.'; er.hidden = false; return; }
+    if (!(dr.s >= 1 && dr.s <= 5)) { er.textContent = '만족도 별점을 골라 주세요.'; er.hidden = false; var sp = document.querySelector('.starpick'); if (sp && sp.scrollIntoView) sp.scrollIntoView({ block: 'center' }); return; }
     S.busy = true; render();
-    api('/api/rate', { method: 'POST', body: { sakeId: id, v: dr.v, comment: dr.t.trim(), drankOn: dr.d } })
+    api('/api/rate', { method: 'POST', body: { sakeId: id, v: dr.v, comment: dr.t.trim(), drankOn: dr.d, stars: dr.s } })
       .then(function () {
         S.busy = false; S.draft = null; S.detail = null; S.sakes = null;
         toast('저장했어요. 평균과 리뷰가 열렸어요');
@@ -633,7 +686,7 @@
     var el = e.target.closest('[data-a]');
     if (!el) return;
     var a = el.getAttribute('data-a');
-    if (a === 'nav') { e.preventDefault(); go(el.getAttribute('data-h')); }
+    if (a === 'nav') { e.preventDefault(); if (el.getAttribute('data-h')) go(el.getAttribute('data-h')); }
     else if (a === 'tab') { S.authTab = el.getAttribute('data-t'); S.authErr = ''; render(); }
     else if (a === 'oplogin-toggle') { S.showOpLogin = !S.showOpLogin; S.authErr = ''; render(); }
     else if (a === 'logout') {
@@ -679,6 +732,17 @@
       e.preventDefault();
       S.F.view = 'list'; S.F.tab = 'all'; S.F.q = ''; S.F.scope = 'all'; S.F.day = null; S.F.month = null; S.draft = null;
       if (S.me && location.hash && location.hash !== '#/') go('#/'); else { render(); window.scrollTo(0, 0); }
+    }
+    else if (a === 'star') {
+      if (!S.draft) return;
+      S.draft.s = +el.getAttribute('data-n');
+      document.querySelectorAll('.starpick .st').forEach(function (b) {
+        var n = +b.getAttribute('data-n');
+        b.classList.toggle('on', n <= S.draft.s);
+        b.setAttribute('aria-checked', String(n === S.draft.s));
+      });
+      var w = $('swd'); if (w) w.textContent = STAR_WORDS[S.draft.s];
+      var er = $('rateerr'); if (er) er.hidden = true;
     }
     else if (a === 'drank-today') { if (S.draft) { S.draft.d = todayStr(); var di = $('drank'); if (di) di.value = S.draft.d; } }
   });
@@ -750,7 +814,6 @@
     S.adminNick = d.adminNick || '';
     if (d.role) {
       S.me = { role: d.role, nickname: d.nickname };
-      if (d.role === 'admin' && (!location.hash || location.hash === '#/')) { location.hash = '#/admin'; return; }
     }
     onRoute();
   }).catch(function (e) {

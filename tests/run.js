@@ -104,7 +104,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   await test('로그인 안 하면 목록·상세·평가 모두 막힘', async () => {
     assert.equal((await call(A.sakes, {})).status, 401);
     assert.equal((await call(A.sake, { query: { id: '1' } })).status, 401);
-    assert.equal((await call(A.rate, { method: 'POST', body: { sakeId: 1, v: [3, 3, 3, 3, 3] } })).status, 401);
+    assert.equal((await call(A.rate, { method: 'POST', body: { stars: 4, sakeId: 1, v: [3, 3, 3, 3, 3] } })).status, 401);
   });
   await test('위조된 쿠키는 로그인으로 인정 안 함', async () => {
     const fake = 'sk=' + Buffer.from('{"role":"admin"}').toString('base64');
@@ -182,6 +182,34 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     assert.equal((await call(A.sakes, { method: 'PATCH', cookie: adm, query: { id: 'abc' }, body: { name: 'x' } })).status, 400);
   });
 
+  /* ----- 만족도 별점 ----- */
+  await test('별점: 없거나 0·6·3.5·"4"는 거절, 1~5 정수만 저장', async () => {
+    for (const s of [undefined, 0, 6, 3.5, '4', null]) {
+      const body = { sakeId: dassai, v: [3, 3, 3, 3, 3] };
+      if (s !== undefined) body.stars = s;
+      assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body })).status, 400, String(s));
+    }
+  });
+  await test('별점 평균은 별점 있는 평가만으로, 리뷰·목록에 별점 표시', async () => {
+    const s = (await call(A.sakes, { method: 'POST', cookie: adm, body: { name: '별점 테스트' } })).body.sake;
+    await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: s.id, v: [3, 3, 3, 3, 3], stars: 5 } });
+    await call(A.rate, { method: 'POST', cookie: g2, body: { sakeId: s.id, v: [3, 3, 3, 3, 3], stars: 2 } });
+    // 별점 기능 전에 남긴 평가처럼 별점이 없는 평가
+    store._db.ratings.push({ sake_id: s.id, nickname: '옛날손님', v: [3, 3, 3, 3, 3], comment: '', drank_on: '2026-09-01', stars: null, updated_at: '2026-09-01T00:00:00Z' });
+    const d = (await call(A.sake, { cookie: g1, query: { id: String(s.id) } })).body;
+    assert.equal(d.avg_stars, 3.5); assert.equal(d.stars_n, 2); assert.equal(d.n, 3); assert.equal(d.my.stars, 5);
+    const byNick = Object.fromEntries(d.reviews.map((r) => [r.nick, r.stars]));
+    assert.deepEqual(byNick, { '민수': 5, '지은': 2, '옛날손님': null });
+    const before = (await call(A.sake, { cookie: (await call(A.auth, { method: 'POST', body: { action: 'signup', nickname: '아직안마심', password: '1234' } })).headers['set-cookie'].split(';')[0], query: { id: String(s.id) } })).body;
+    assert.equal(before.avg_stars, undefined, '평가 전에는 평균 별점도 안 보여야 함');
+    const l1 = (await call(A.sakes, { cookie: g1 })).body.sakes.find((x) => x.id === s.id);
+    const l2 = (await call(A.sakes, { cookie: g2 })).body.sakes.find((x) => x.id === s.id);
+    assert.equal(l1.stars, 5); assert.equal(l2.stars, 2);
+    await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: s.id, v: [3, 3, 3, 3, 3], stars: 3 } });
+    assert.equal((await call(A.sake, { cookie: g1, query: { id: String(s.id) } })).body.my.stars, 3, '다시 평가하면 별점도 수정');
+    await call(A.sakes, { method: 'DELETE', cookie: adm, query: { id: String(s.id) } });
+  });
+
   /* ----- 술 설명 ----- */
   await test('술 설명: 제목·본문 저장, 줄바꿈 유지, 수정·비우기', async () => {
     const r = await call(A.sakes, { method: 'POST', cookie: adm, body: { name: '설명 테스트', desc_title: '멜론 향 가득', desc_body: '첫 줄\r\n둘째 줄\t탭' } });
@@ -204,25 +232,25 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
 
   /* ----- 평가 ----- */
   await test('평가 전에는 평균·리뷰가 서버에서부터 안 내려옴', async () => {
-    await call(A.rate, { method: 'POST', cookie: g2, body: { sakeId: dassai, v: [4, 3, 2, 2, 4], comment: '과일향이 확' } });
+    await call(A.rate, { method: 'POST', cookie: g2, body: { stars: 4, sakeId: dassai, v: [4, 3, 2, 2, 4], comment: '과일향이 확' } });
     const r = await call(A.sake, { cookie: g1, query: { id: String(dassai) } });
     assert.equal(r.status, 200); assert.equal(r.body.rated, false); assert.equal(r.body.n, 1);
     assert.equal(r.body.avg, null); assert.equal(r.body.reviews, null);
   });
   await test('평가: 점수는 5개 모두 1~5 정수만', async () => {
     for (const v of [[0, 3, 3, 3, 3], [6, 3, 3, 3, 3], [3, 3, 3, 3], [3.5, 3, 3, 3, 3], ['3', 3, 3, 3, 3], null]) {
-      assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: dassai, v } })).status, 400, JSON.stringify(v));
+      assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: dassai, v } })).status, 400, JSON.stringify(v));
     }
   });
   await test('평가: 한줄평 50자까지 OK, 51자 거절 (한글 기준)', async () => {
-    assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: juyon, v: [3, 3, 3, 3, 3], comment: B(51) } })).status, 400);
-    assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: juyon, v: [3, 3, 3, 3, 3], comment: B(50) } })).status, 200);
+    assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: juyon, v: [3, 3, 3, 3, 3], comment: B(51) } })).status, 400);
+    assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: juyon, v: [3, 3, 3, 3, 3], comment: B(50) } })).status, 200);
   });
   await test('평가: 없는 사케에는 평가 불가', async () => {
-    assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: 999, v: [3, 3, 3, 3, 3] } })).status, 404);
+    assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: 999, v: [3, 3, 3, 3, 3] } })).status, 404);
   });
   await test('평가 후: 평균·리뷰 공개, 평균 계산 정확', async () => {
-    await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: dassai, v: [2, 3, 4, 3, 5], comment: '깔끔' } });
+    await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: dassai, v: [2, 3, 4, 3, 5], comment: '깔끔' } });
     const r = await call(A.sake, { cookie: g1, query: { id: String(dassai) } });
     assert.equal(r.body.rated, true); assert.equal(r.body.n, 2);
     assert.deepEqual(r.body.avg, [3, 3, 3, 2.5, 4.5]);
@@ -230,15 +258,15 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     assert.equal(r.body.reviews.length, 2);
     const mine = r.body.reviews.find((x) => x.mine);
     assert.equal(mine.nick, '민수'); assert.equal(mine.t, '깔끔'); assert.ok(mine.at);
-    assert.deepEqual(Object.keys(mine).sort(), ['admin', 'at', 'mine', 'nick', 't'], '리뷰에는 점수가 안 나가야 함');
+    assert.deepEqual(Object.keys(mine).sort(), ['admin', 'at', 'mine', 'nick', 'stars', 't'], '리뷰에는 맛 점수는 안 나가고 만족도 별점만');
   });
   await test('다시 평가하면 새로 쌓이지 않고 수정됨', async () => {
-    await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: dassai, v: [3, 3, 3, 3, 3], comment: '다시 마셔보니 보통' } });
+    await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: dassai, v: [3, 3, 3, 3, 3], comment: '다시 마셔보니 보통' } });
     const r = await call(A.sake, { cookie: g1, query: { id: String(dassai) } });
     assert.equal(r.body.n, 2); assert.equal(r.body.my.t, '다시 마셔보니 보통');
   });
   await test('운영자도 평가 가능, 리뷰에 운영자 표시', async () => {
-    const w = await call(A.rate, { method: 'POST', cookie: adm, body: { sakeId: dassai, v: [3, 3, 2, 3, 4], comment: '운영자 추천' } });
+    const w = await call(A.rate, { method: 'POST', cookie: adm, body: { stars: 4, sakeId: dassai, v: [3, 3, 2, 3, 4], comment: '운영자 추천' } });
     assert.equal(w.status, 200);
     const r = await call(A.sake, { cookie: g2, query: { id: String(dassai) } });
     const a = r.body.reviews.find((x) => x.nick === '아무개');
@@ -258,9 +286,9 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   await test('마신 날짜: 비우면 오늘(한국 시간), 고른 날짜는 그대로 저장', async () => {
     const v = require('../lib/validate');
     const s = (await call(A.sakes, { method: 'POST', cookie: adm, body: { name: '날짜 테스트' } })).body.sake;
-    await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: s.id, v: [3, 3, 3, 3, 3] } });
+    await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: s.id, v: [3, 3, 3, 3, 3] } });
     assert.equal(store._db.ratings.find((r) => r.sake_id === s.id).drank_on, v.todayKST());
-    await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: s.id, v: [3, 3, 3, 3, 3], drankOn: '2026-09-15' } });
+    await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: s.id, v: [3, 3, 3, 3, 3], drankOn: '2026-09-15' } });
     assert.equal(store._db.ratings.find((r) => r.sake_id === s.id).drank_on, '2026-09-15');
     const list = (await call(A.sakes, { cookie: g1 })).body.sakes.find((x) => x.id === s.id);
     assert.equal(list.drank_on, '2026-09-15');
@@ -272,7 +300,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   });
   await test('마신 날짜: 없는 날짜·형식 오류·미래·너무 옛날은 거절', async () => {
     for (const d of ['2026-02-30', '2026/09/01', '어제', '2999-01-01', '1999-12-31']) {
-      assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: dassai, v: [3, 3, 3, 3, 3], drankOn: d } })).status, 400, d);
+      assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: dassai, v: [3, 3, 3, 3, 3], drankOn: d } })).status, 400, d);
     }
   });
   await test('사케 삭제하면 그 평가도 함께 삭제', async () => {
@@ -341,13 +369,18 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     assert.match(op.text(), /사케치북/); assert.match(op.text(), /기억력 한계를 극복하기 위한 사케 기록장/);
     assert.doesNotMatch(op.text(), /체험용|예시 데이터|민수|1234/);
   });
-  await test('[화면] 운영자 로그인 → 관리 화면, 아무개 + 운영자 뱃지', async () => {
+  await test('[화면] 운영자 로그인 → 첫 화면은 사케 목록, "관리"로 관리 화면', async () => {
     await op.click(op.btn('운영자 로그인'));
     op.type('#oid', 'ADMIN'); op.type('#opw', '880825');
     await op.submit('#opform');
-    assert.equal(op.w.location.hash, '#/admin');
+    assert.ok(op.w.location.hash === '#/' || op.w.location.hash === '', '운영자 첫 화면은 사케 목록');
+    assert.ok(op.$('.viewtabs') || /아직 등록된 사케가 없어요/.test(op.text()));
     assert.match(op.text(), /아무개/); assert.ok(op.$('.top .chip.op'));
+    assert.match(op.text(), /관리 화면에서 첫 사케를 등록해 주세요/);
+    await op.click(op.btn('관리'));
+    assert.equal(op.w.location.hash, '#/admin');
     assert.match(op.text(), /새 사케 등록/); assert.match(op.text(), /아직 등록된 사케가 없어요/);
+    assert.ok(!op.btn('시음하기'), '관리 화면에 시음하기 버튼이 없어야 함');
   });
   await test('[화면] 이름 없이 등록 누르면 안내 문구', async () => {
     await op.submit('#sakeform');
@@ -397,8 +430,8 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     await op.click(op.btn('수정 취소'));
   });
   const kubota = store._db.sakes[0].id;
-  await test('[화면] 운영자 "시음하기" → 목록 → 상세에도 "사케 정보 수정" 버튼', async () => {
-    await op.click(op.btn('시음하기'));
+  await test('[화면] 관리 화면에서 로고 → 목록 → 상세에도 "사케 정보 수정" 버튼', async () => {
+    await op.click(op.$('.top .brand'));
     assert.equal(op.w.location.hash, '#/');
     assert.match(op.text(), /평가 0\/1/);
     await op.click(op.$('.card'));
@@ -414,7 +447,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     assert.equal(op.w.location.hash, '#/admin');
     assert.equal(op.$('#oname').value, '쿠보타 만주 준마이다이긴조');
     await op.click(op.btn('수정 취소'));
-    await op.click(op.btn('시음하기'));
+    await op.click(op.$('.top .brand'));
     await op.click(op.$('.card'));
   });
   await test('[화면] 운영자 평가: 슬라이더·한줄평 → 저장 → 비교 차트와 리뷰(운영자 뱃지)', async () => {
@@ -424,7 +457,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     assert.equal(op.$('#w0').textContent, '드라이해요');
     op.type('#cmt', '드라이하고 깔끔');
     assert.equal(op.$('#cnt').textContent, '8 / 50');
-    await op.click(op.btn('저장하고 결과 보기'));
+    await op.click(op.$('[data-a="star"][data-n="4"]')); await op.click(op.btn('저장하고 결과 보기'));
     await op.settle();
     assert.equal(op.w.location.hash, '#/sake/' + kubota);
     assert.match(op.text(), /내 평가 vs 평균/); assert.match(op.text(), /리뷰 1/);
@@ -458,7 +491,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     await gu.click(gu.btn('내 평가 남기기'));
     const sl = gu.$('#sl0'); sl.value = '5'; sl.dispatchEvent(new gu.w.Event('input', { bubbles: true }));
     gu.type('#cmt', '<b>달다</b>');
-    await gu.click(gu.btn('저장하고 결과 보기'));
+    await gu.click(gu.$('[data-a="star"][data-n="4"]')); await gu.click(gu.btn('저장하고 결과 보기'));
     await gu.settle();
     assert.match(gu.text(), /나 포함 2명/); assert.match(gu.text(), /드라이하고 깔끔/);
     // 단맛: 나 5, 평균 (1+5)/2 = 3.0
@@ -528,9 +561,9 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     const s3 = await mk({ name: '핫카이산 특별본양조', brewer: '핫카이양조', origin: '니가타현' });
     const s4 = await mk({ name: '주욘다이 혼마루', brewer: '타카기주조', origin: '야마가타현' });
     const gc = cookieFrom(await call(A.auth, { method: 'POST', body: { action: 'signup', nickname: '바다', password: 'sea1' } }));
-    await call(A.rate, { method: 'POST', cookie: gc, body: { sakeId: s1, v: [4, 3, 2, 2, 4], drankOn: '2026-09-15' } });
-    await call(A.rate, { method: 'POST', cookie: gc, body: { sakeId: s3, v: [2, 2, 4, 4, 3], drankOn: '2026-09-15' } });
-    await call(A.rate, { method: 'POST', cookie: gc, body: { sakeId: s2, v: [2, 3, 3, 3, 3], drankOn: '2026-09-03' } });
+    await call(A.rate, { method: 'POST', cookie: gc, body: { stars: 4, sakeId: s1, v: [4, 3, 2, 2, 4], drankOn: '2026-09-15' } });
+    await call(A.rate, { method: 'POST', cookie: gc, body: { stars: 4, sakeId: s3, v: [2, 2, 4, 4, 3], drankOn: '2026-09-15' } });
+    await call(A.rate, { method: 'POST', cookie: gc, body: { stars: 4, sakeId: s2, v: [2, 3, 3, 3, 3], drankOn: '2026-09-03' } });
 
     const b = browser();
     await b.settle();
@@ -699,13 +732,13 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       const today = now.getFullYear() + '-' + z(now.getMonth() + 1) + '-' + z(now.getDate());
       assert.equal(di.value, today); assert.equal(di.max, today);
       di.value = '2999-01-01'; di.dispatchEvent(new b.w.Event('input', { bubbles: true }));
-      await b.click(b.btn('저장하고 결과 보기'));
+      await b.click(b.$('[data-a="star"][data-n="4"]')); await b.click(b.btn('저장하고 결과 보기'));
       assert.match(b.$('#rateerr').textContent, /미래 날짜/);
       assert.ok(!b.$('#rateerr').hidden);
     });
     await test('[마신 날짜] 날짜 바꿔 저장 → 상세와 캘린더에 반영', async () => {
       const di = b.$('#drank'); di.value = '2026-09-03'; di.dispatchEvent(new b.w.Event('input', { bubbles: true }));
-      await b.click(b.btn('저장하고 결과 보기')); await b.settle();
+      await b.click(b.$('[data-a="star"][data-n="4"]')); await b.click(b.btn('저장하고 결과 보기')); await b.settle();
       assert.match(b.text(), /9월 3일 \(목\)에 마셨어요/);
       await b.click(b.btn('← 목록'));
       await b.click(b.btn('마신 날짜별'));
@@ -726,10 +759,85 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.notEqual(b.$('#drank').value, '2026-09-03');
       await b.click(b.btn('취소'));
     });
+    const s5 = await mk({ name: '야마가타 마사무네', brewer: '미토베주조', origin: '야마가타현' });
+    const gc2 = cookieFrom(await call(A.auth, { method: 'POST', body: { action: 'signup', nickname: '산', password: 'mnt1' } }));
+    await call(A.rate, { method: 'POST', cookie: gc2, body: { sakeId: s5, v: [3, 3, 3, 3, 3], stars: 5, comment: '최고' } });
+    await test('[별점] 별점을 안 고르면 저장 안 되고 안내', async () => {
+      b.w.location.hash = '#/sake/' + s5 + '/rate'; await b.settle(); await b.settle(); await b.settle();
+      assert.equal(b.$$('.starpick .st').length, 5);
+      assert.equal(b.$('#swd').textContent, '별을 눌러 골라 주세요');
+      await b.click(b.btn('저장하고 결과 보기'));
+      assert.match(b.$('#rateerr').textContent, /만족도 별점을 골라 주세요/);
+      assert.match(b.w.location.hash, /\/rate$/);
+    });
+    await test('[별점] 별 2개 누르면 2개 칠해지고 "아쉬웠어요", 저장', async () => {
+      await b.click(b.$('[data-a="star"][data-n="2"]'));
+      assert.equal(b.$$('.starpick .st.on').length, 2);
+      assert.equal(b.$('[data-a="star"][data-n="2"]').getAttribute('aria-checked'), 'true');
+      assert.equal(b.$('#swd').textContent, '아쉬웠어요');
+      assert.ok(b.$('#rateerr').hidden);
+      await b.click(b.btn('저장하고 결과 보기')); await b.settle();
+      assert.equal(b.w.location.hash, '#/sake/' + s5);
+    });
+    await test('[별점] 내 만족도 vs 평균 만족도, 리뷰 닉네임 옆 별점', async () => {
+      const sat = b.$('.satis').textContent;
+      assert.match(sat, /내 만족도\s*★+\s*2/); assert.match(sat, /평균 만족도 \(2명\)/); assert.match(sat, /3\.5/);
+      assert.equal(b.$$('.satis .stars')[1].querySelectorAll('.st.half').length, 1, '3.5점은 반 별');
+      const rv = b.$$('.review').map((r) => [r.querySelector('.head b').textContent, r.querySelectorAll('.stars.sm .st.on').length]);
+      assert.deepEqual(rv, [['바다', 2], ['산', 5]]);
+      const head = b.$$('.review')[1].querySelector('.head');
+      assert.ok(head.querySelector('b').compareDocumentPosition(head.querySelector('.stars')) & 4, '별점은 닉네임 뒤에');
+    });
+    await test('[별점] 다시 평가 열면 저장한 별점이 채워져 있음', async () => {
+      await b.click(b.btn('내 평가 수정'));
+      assert.equal(b.$$('.starpick .st.on').length, 2);
+      await b.click(b.btn('취소'));
+    });
+    await test('[별점] 목록 카드에 내 별점, "내 별점순" 정렬', async () => {
+      await b.click(b.$('.top .brand'));
+      const card = b.$$('#results .card').find((c) => /야마가타/.test(c.textContent));
+      assert.match(card.querySelector('.mystar').textContent, /★ 2/);
+      const sel = b.$('#sort'); sel.value = 'stars'; sel.dispatchEvent(new b.w.Event('change', { bubbles: true })); await b.settle();
+      assert.equal(names()[names().length - 1], '야마가타 마사무네', '별 2개는 별 4개들보다 뒤');
+    });
+    await test('[이전/다음] 목록 순서대로 이동, 처음·마지막 표시, 위쪽 작은 버튼도 동작', async () => {
+      const sel = b.$('#sort'); sel.value = 'name'; sel.dispatchEvent(new b.w.Event('change', { bubbles: true })); await b.settle();
+      const order = names();
+      await b.click(b.$$('#results .card')[0]);
+      assert.match(b.$('.pmini').textContent, new RegExp('1 / ' + order.length));
+      assert.ok(b.$('.pmini [aria-label="이전 술"]').disabled);
+      assert.match(b.$('.pager .pg.prev').textContent, /처음이에요/);
+      assert.match(b.$('.pager .pg.next').textContent, new RegExp(order[1]));
+      await b.click(b.$('.pager .pg.next')); await b.settle();
+      assert.equal(b.$('.name').textContent, order[1]);
+      assert.match(b.$('.pmini').textContent, new RegExp('2 / ' + order.length));
+      await b.click(b.$('.pmini [aria-label="이전 술"]')); await b.settle();
+      assert.equal(b.$('.name').textContent, order[0]);
+      for (let i = 1; i < order.length; i++) { await b.click(b.$('.pmini [aria-label="다음 술"]')); await b.settle(); }
+      assert.equal(b.$('.name').textContent, order[order.length - 1]);
+      assert.ok(b.$('.pmini [aria-label="다음 술"]').disabled);
+      assert.match(b.$('.pager .pg.next').textContent, /마지막이에요/);
+    });
+    await test('[이전/다음] 검색 결과 안에서만 이동 ("아사히" 양조장 검색 → 2병)', async () => {
+      await b.click(b.$('.top .brand'));
+      await b.click(b.$$('.toolbar .seg button').find((x) => x.textContent === '양조장'));
+      const q = b.$('#q'); q.value = '아사히'; q.dispatchEvent(new b.w.Event('input', { bubbles: true })); await b.settle();
+      await b.click(b.$$('#results .card')[0]);
+      assert.match(b.$('.pmini').textContent, /1 \/ 2/);
+      await b.click(b.$('.top .brand'));
+    });
+    await test('[이전/다음] 주소로 바로 들어와도 이전/다음이 보임', async () => {
+      const b2 = browser(); await b2.settle();
+      b2.type('#nick', '바다'); b2.type('#pw', 'sea1'); await b2.submit('#authform');
+      b2.w.location.hash = '#/sake/' + s2; await b2.settle(); await b2.settle(); await b2.settle();
+      assert.ok(b2.$('.pager')); assert.ok(b2.$('.pmini'));
+      assert.deepEqual(b2.errors, []);
+    });
     await test('[관리] 운영자 목록 검색', async () => {
       const o = browser(); await o.settle();
       await o.click(o.btn('운영자 로그인'));
       o.type('#oid', 'ADMIN'); o.type('#opw', '880825'); await o.submit('#opform');
+      await o.click(o.btn('관리'));
       const q = o.$('#aq'); q.value = '핫카이'; q.dispatchEvent(new o.w.Event('input', { bubbles: true })); await o.settle();
       assert.deepEqual(o.$$('#alist .oprow b').map((x) => x.textContent), ['핫카이산 특별본양조']);
       assert.equal(o.$('#aq'), q);
@@ -739,6 +847,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       const o = browser(); await o.settle();
       await o.click(o.btn('운영자 로그인'));
       o.type('#oid', 'ADMIN'); o.type('#opw', '880825'); await o.submit('#opform');
+      await o.click(o.btn('관리'));
       assert.ok(o.$('#odt')); assert.equal(o.$('#odb').tagName, 'TEXTAREA');
       assert.equal(o.$('#odt').maxLength, 40); assert.equal(o.$('#odb').maxLength, 1000);
       const row = o.$$('#alist .oprow').find((r) => /핫카이산/.test(r.textContent));

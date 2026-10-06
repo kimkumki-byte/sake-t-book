@@ -41,11 +41,14 @@ create table if not exists public.ratings (
   ),                                  -- 단맛, 산미, 바디감, 알콜감, 여운
   comment text not null default '' check (char_length(comment) <= 50),
   drank_on date not null default ((now() at time zone 'Asia/Seoul')::date),  -- 마신 날짜
+  stars smallint check (stars between 1 and 5),  -- 만족도 별점 (1~5)
   updated_at timestamptz not null default now(),
   unique (sake_id, nickname)
 );
 create index if not exists ratings_sake_idx on public.ratings (sake_id);
 create index if not exists ratings_nick_idx on public.ratings (nickname, drank_on);
+-- 예전에 만든 데이터베이스에 별점 칸 추가 (이미 있으면 그냥 넘어가요)
+alter table public.ratings add column if not exists stars smallint check (stars between 1 and 5);
 
 -- 4) 보안: 화면(브라우저)에서는 테이블에 직접 접근 못 하게 잠그고,
 --    우리 서버(비밀 키)만 읽고 쓰게 해요.

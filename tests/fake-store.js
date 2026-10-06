@@ -33,15 +33,15 @@ function createFakeStore() {
       db.ratings = db.ratings.filter((r) => r.sake_id !== id);
     },
     async removeImage(url) { db.images.delete(url); },
-    async allRatingsLite() { return db.ratings.map((r) => ({ sake_id: r.sake_id, nickname: r.nickname, drank_on: r.drank_on })); },
+    async allRatingsLite() { return db.ratings.map((r) => ({ sake_id: r.sake_id, nickname: r.nickname, drank_on: r.drank_on, stars: r.stars ?? null })); },
     async ratingsFor(id) {
       return copy(db.ratings.filter((r) => r.sake_id === id)).sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     },
-    async upsertRating({ sake_id, nickname, v, comment, drank_on }) {
+    async upsertRating({ sake_id, nickname, v, comment, drank_on, stars }) {
       if (!db.sakes.some((s) => s.id === sake_id)) throw new Error('foreign key');
       const r = db.ratings.find((x) => x.sake_id === sake_id && x.nickname === nickname);
-      if (r) Object.assign(r, { v, comment, drank_on, updated_at: now() });
-      else db.ratings.push({ sake_id, nickname, v, comment, drank_on, updated_at: now() });
+      if (r) Object.assign(r, { v, comment, drank_on, stars, updated_at: now() });
+      else db.ratings.push({ sake_id, nickname, v, comment, drank_on, stars, updated_at: now() });
     },
     async uploadImage(buf, type) {
       const url = `https://fake.supabase.co/storage/v1/object/public/sake-images/${db.images.size + 1}-${Date.now()}.${type.split('/')[1]}`;

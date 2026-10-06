@@ -42,16 +42,17 @@ module.exports = handler(['GET', 'POST', 'PATCH', 'DELETE'], async (req, res) =>
     const me = requireSession(req);
     const [sakes, ratings] = await Promise.all([store.listSakes(), store.allRatingsLite()]);
     const counts = {};
-    const mine = {}; // 내가 평가한 사케 → 마신 날짜
+    const mine = {}; // 내가 평가한 사케 → { 마신 날짜, 내 별점 }
     ratings.forEach((r) => {
       counts[r.sake_id] = (counts[r.sake_id] || 0) + 1;
-      if (r.nickname === me.nick) mine[r.sake_id] = r.drank_on || null;
+      if (r.nickname === me.nick) mine[r.sake_id] = { drank_on: r.drank_on || null, stars: r.stars ?? null };
     });
     return send(res, 200, {
       sakes: sakes.map((s) => ({
         id: s.id, name: s.name, brewer: s.brewer, origin: s.origin, tint: s.tint, img_url: s.img_url,
         created_at: s.created_at, n: counts[s.id] || 0,
-        rated: Object.prototype.hasOwnProperty.call(mine, s.id), drank_on: mine[s.id] || null,
+        rated: Object.prototype.hasOwnProperty.call(mine, s.id),
+        drank_on: mine[s.id] ? mine[s.id].drank_on : null, stars: mine[s.id] ? mine[s.id].stars : null,
       })),
     });
   }
