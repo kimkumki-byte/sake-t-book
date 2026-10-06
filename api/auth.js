@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const store = require('../lib/store');
 const v = require('../lib/validate');
 const { HttpError, handler, send } = require('../lib/http');
-const { adminConfig, safeEqual, setSession, clearSession } = require('../lib/auth');
+const { adminConfig, safeEqual, setSession, clearSession, requireSession } = require('../lib/auth');
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -61,6 +61,48 @@ module.exports = handler(['POST'], async (req, res) => {
     }
     setSession(req, res, { role: 'admin', nick: admin.nick });
     return send(res, 200, { ok: true, role: 'admin', nickname: admin.nick });
+  }
+
+  /* ---------- 내 계정 (MY) ---------- */
+  if (action === 'rename' || action === 'password' || action === 'withdraw') {
+    const me = requireSession(req);
+    if (me.role !== 'guest') throw new HttpError(403, '운영자 계정 정보는 Vercel 설정에서 바꿔요.');
+
+    if (action === 'rename') {
+      const nick = v.nickname(req.body.nickname);
+      const lower = nick.toLowerCase();
+      if (nick === me.nick) throw new HttpError(400, '지금 쓰는 닉네임과 같아요.');
+      if (lower === admin.nick.toLowerCase() || lower === admin.id.toLowerCase()) {
+        throw new HttpError(409, '이미 쓰고 있는 닉네임이에요. 다른 닉네임을 써 주세요.');
+      }
+      try {
+        await store.renameGuest(me.nick, nick);
+      } catch (e) {
+        if (e.code === 'DUP') throw new HttpError(409, '이미 쓰고 있는 닉네임이에요. 다른 닉네임을 써 주세요.');
+        throw e;
+      }
+      setSession(req, res, { role: 'guest', nick });
+      return send(res, 200, { ok: true, nickname: nick });
+    }
+
+    // 비밀번호 변경·탈퇴는 지금 비밀번호를 한 번 더 확인해요
+    const guest = await store.getGuest(me.nick);
+    const okPw = guest && (await bcrypt.compare(String(req.body.password || ''), guest.pw_hash));
+    if (!okPw) {
+      await wait(400);
+      throw new HttpError(400, '지금 비밀번호가 맞지 않아요.');
+    }
+
+    if (action === 'password') {
+      const next = v.password(req.body.newPassword);
+      await store.setPassword(me.nick, await bcrypt.hash(next, 10));
+      return send(res, 200, { ok: true });
+    }
+
+    // withdraw: 내가 쓴 평가·찜·회원 정보를 모두 삭제
+    await store.deleteGuest(me.nick);
+    clearSession(req, res);
+    return send(res, 200, { ok: true });
   }
 
   throw new HttpError(400, '알 수 없는 요청이에요.');

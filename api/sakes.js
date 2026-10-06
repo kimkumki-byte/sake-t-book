@@ -40,7 +40,8 @@ function readId(req) {
 module.exports = handler(['GET', 'POST', 'PATCH', 'DELETE'], async (req, res) => {
   if (req.method === 'GET') {
     const me = requireSession(req);
-    const [sakes, ratings] = await Promise.all([store.listSakes(), store.allRatingsLite()]);
+    const [sakes, ratings, wishes] = await Promise.all([store.listSakes(), store.allRatingsLite(), store.listWishes(me.nick)]);
+    const wished = new Set(wishes.map((w) => w.sake_id));
     const counts = {};
     const mine = {}; // 내가 평가한 사케 → { 마신 날짜, 내 별점 }
     ratings.forEach((r) => {
@@ -53,6 +54,7 @@ module.exports = handler(['GET', 'POST', 'PATCH', 'DELETE'], async (req, res) =>
         created_at: s.created_at, n: counts[s.id] || 0,
         rated: Object.prototype.hasOwnProperty.call(mine, s.id),
         drank_on: mine[s.id] ? mine[s.id].drank_on : null, stars: mine[s.id] ? mine[s.id].stars : null,
+        wished: wished.has(s.id),
       })),
     });
   }

@@ -9,11 +9,12 @@ module.exports = handler(['GET'], async (req, res) => {
   const id = parseInt(req.query.id, 10);
   if (!Number.isInteger(id)) throw new HttpError(400, '사케를 알 수 없어요.');
   // 사케 정보와 평가를 동시에 가져와요 (기다리는 시간 절반)
-  const [sake, rows] = await Promise.all([store.getSake(id), store.ratingsFor(id)]);
+  const [sake, rows, wishes] = await Promise.all([store.getSake(id), store.ratingsFor(id), store.listWishes(me.nick)]);
   if (!sake) throw new HttpError(404, '등록되지 않았거나 삭제된 사케예요.');
 
   const mine = rows.find((r) => r.nickname === me.nick) || null;
-  const base = { sake, n: rows.length, rated: !!mine, my: null, avg: null, reviews: null };
+  const wished = wishes.some((w) => w.sake_id === id);
+  const base = { sake, n: rows.length, rated: !!mine, wished, my: null, avg: null, reviews: null };
   if (!mine) return send(res, 200, base);
 
   const avg = [0, 1, 2, 3, 4].map((i) => rows.reduce((a, r) => a + r.v[i], 0) / rows.length);

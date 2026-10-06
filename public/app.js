@@ -33,7 +33,12 @@
     loadErr: '',
     // 목록 분류·검색·캘린더
     F: { tab: 'all', q: '', scope: 'all', sort: 'new', view: 'list', month: null, day: null },
-    aq: ''               // 운영자 관리 목록 검색어
+    aq: '',              // 운영자 관리 목록 검색어
+    home: null,          // 홈 데이터
+    rank: { period: 'all', offset: 0, data: null },
+    my: null,            // MY 데이터
+    mySort: 'new',
+    acct: '', acctErr: '', byeConfirm: false, byePw: ''
   };
 
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -104,12 +109,29 @@
   function isAdmin() { return S.me && S.me.role === 'admin'; }
 
   var toastTimer;
-  function toast(msg) {
+  function toast(msg, ms) {
     var t = $('toast');
     t.textContent = msg;
     t.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.hidden = true; }, 2400);
+    toastTimer = setTimeout(function () { t.hidden = true; }, ms || 2400);
+  }
+  // 받침에 따라 을/를
+  function josa(word, a, b) {
+    var s = String(word || ''), c = s.charCodeAt(s.length - 1);
+    if (c >= 0xAC00 && c <= 0xD7A3) return (c - 0xAC00) % 28 ? a : b;
+    if (/[0136789]$/.test(s)) return a;
+    return b;
+  }
+  // "방금", "10분 전" …
+  function ago(iso) {
+    var d = new Date(iso), s = (Date.now() - d.getTime()) / 1000;
+    if (isNaN(s)) return '';
+    if (s < 60) return '방금';
+    if (s < 3600) return Math.floor(s / 60) + '분 전';
+    if (s < 86400) return Math.floor(s / 3600) + '시간 전';
+    if (s < 86400 * 7) return Math.floor(s / 86400) + '일 전';
+    return (d.getMonth() + 1) + '월 ' + d.getDate() + '일';
   }
 
   function bottle(tint) {
@@ -163,6 +185,9 @@
     var p = h.split('/');
     if (p[0] === 'sake' && /^\d+$/.test(p[1] || '')) return { name: p[2] === 'rate' ? 'rate' : 'detail', id: +p[1] };
     if (p[0] === 'admin') return { name: 'admin' };
+    if (p[0] === 'tasting') return { name: 'tasting' };
+    if (p[0] === 'ranking') return { name: 'ranking' };
+    if (p[0] === 'my') return { name: 'my' };
     return { name: 'home' };
   }
   function go(hash) {
@@ -211,6 +236,7 @@
     var list = S.sakes.filter(function (s) {
       if (F.tab === 'rated' && !s.rated) return false;
       if (F.tab === 'todo' && s.rated) return false;
+      if (F.tab === 'wish' && !s.wished) return false;
       return matches(s, q, F.scope);
     });
     return sortList(list);
@@ -249,7 +275,8 @@
     if (!list.length) {
       var msg = F.q.trim() ? '"' + esc(F.q.trim()) + '"에 맞는 사케가 없어요.' :
         F.tab === 'rated' ? '아직 마신 사케가 없어요.<br>사케를 골라 첫 평가를 남겨 보세요.' :
-        F.tab === 'todo' ? '등록된 사케를 모두 평가했어요.' : '사케가 없어요.';
+        F.tab === 'todo' ? '등록된 사케를 모두 평가했어요.' :
+        F.tab === 'wish' ? '찜한 사케가 없어요.<br>사케 화면에서 ♡를 눌러 보세요.' : '사케가 없어요.';
       return '<div class="panel muted center">' + msg + (F.q.trim() ? '<br><button class="link" data-a="clearq">검색어 지우기</button>' : '') + '</div>';
     }
     return (F.q.trim() ? '<p class="tiny" style="margin:0">검색 결과 ' + list.length + '개</p>' : '') +
@@ -258,7 +285,8 @@
 
   function listView() {
     var F = S.F, all = S.sakes.length, rated = S.sakes.filter(function (s) { return s.rated; }).length;
-    var tabs = [['all', '전체', all], ['rated', '마신 사케', rated], ['todo', '평가할 사케', all - rated]];
+    var wished = S.sakes.filter(function (s) { return s.wished; }).length;
+    var tabs = [['all', '전체', all], ['rated', '마신 사케', rated], ['todo', '평가할 사케', all - rated], ['wish', '찜', wished]];
     return '<div class="filters" role="tablist" aria-label="사케 분류">' + tabs.map(function (x) {
         return '<button role="tab" data-a="ftab" data-t="' + x[0] + '" aria-selected="' + (F.tab === x[0]) + '">' + x[1] + ' <span class="num">' + x[2] + '</span></button>';
       }).join('') + '</div>' +
@@ -319,10 +347,8 @@
     return h;
   }
 
-  function vHome() {
-    var right = isAdmin()
-      ? '<button class="link" data-a="nav" data-h="#/admin">관리</button>'
-      : '<button class="link" data-a="logout">나가기</button>';
+  function vTasting() {
+    var right = '';
     if (!S.sakes) return topBar(esc(S.me.nickname)) + '<div class="loading">불러오는 중…</div>';
     var done = S.sakes.filter(function (s) { return s.rated; }).length;
     var who = isAdmin() ? esc(S.me.nickname) + ' ' + badge(S.me.nickname) : esc(S.me.nickname) + '님';
@@ -370,18 +396,20 @@
   }
 
   function vDetail(id) {
-    var back = topBar() + '<button class="back" data-a="nav" data-h="#/">← 목록</button>';
-    if (S.loadErr) return back + '<div class="panel center stack"><p class="err">' + esc(S.loadErr) + '</p><button class="btn ghost" data-a="nav" data-h="#/">목록으로</button></div>';
+    var back = topBar() + '<button class="back" data-a="nav" data-h="#/tasting">← 목록</button>';
+    if (S.loadErr) return back + '<div class="panel center stack"><p class="err">' + esc(S.loadErr) + '</p><button class="btn ghost" data-a="nav" data-h="#/tasting">목록으로</button></div>';
     var d = S.detail;
     if (!d || d.sake.id !== id) return back + '<div class="loading">불러오는 중…</div>';
     var s = d.sake, nb = neighbors(id);
-    var h = topBar() + '<div class="navrow"><button class="back" data-a="nav" data-h="#/">← 목록</button>' + pagerMini(nb) + '</div>' +
+    var h = topBar() + '<div class="navrow"><button class="back" data-a="nav" data-h="#/tasting">← 목록</button>' + pagerMini(nb) + '</div>' +
       '<div class="hero">' + pic(s) + '</div>';
     h += '<div class="stack" style="gap:4px"><span class="tiny">' +
       (s.brewer ? '<button class="inlink" data-a="brewer" data-b="' + esc(s.brewer) + '" aria-label="' + esc(s.brewer) + ' 사케 모아보기">' + esc(s.brewer) + '</button>' : '') +
       (s.brewer && s.origin ? ' · ' : '') +
       (s.origin ? '<button class="inlink" data-a="origin" data-b="' + esc(s.origin) + '" aria-label="' + esc(s.origin) + ' 사케 모아보기">' + esc(s.origin) + '</button>' : '') +
-      '</span><h2 class="display name">' + esc(s.name) + '</h2></div>';
+      '</span><div class="namerow"><h2 class="display name">' + esc(s.name) + '</h2>' +
+      '<button class="wish' + (d.wished ? ' on' : '') + '" data-a="wish" data-id="' + s.id + '" aria-pressed="' + !!d.wished + '" aria-label="마셔보고 싶어요">' +
+      '<span class="hv" aria-hidden="true">' + (d.wished ? '♥' : '♡') + '</span><span>찜</span></button></div></div>';
     h += '<dl class="spec" style="margin:0">' +
       specCell('원료', s.rice, null, '', true) +
       specCell('정미율', s.polish, '%') +
@@ -431,7 +459,7 @@
   /* ---------- 화면: 평가 ---------- */
   function vRate(id) {
     var d = S.detail;
-    if (!d || d.sake.id !== id) return topBar() + '<button class="back" data-a="nav" data-h="#/">← 목록</button><div class="loading">불러오는 중…</div>';
+    if (!d || d.sake.id !== id) return topBar() + '<button class="back" data-a="nav" data-h="#/tasting">← 목록</button><div class="loading">불러오는 중…</div>';
     if (!S.draft || S.draft.id !== id) {
       S.draft = d.my ? { id: id, v: d.my.v.slice(), t: d.my.t, d: d.my.drank_on || todayStr(), s: d.my.stars || 0 } : { id: id, v: [3, 3, 3, 3, 3], t: '', d: todayStr(), s: 0 };
     }
@@ -466,8 +494,8 @@
   /* ---------- 화면: 운영자 관리 (등록·수정·삭제) ---------- */
   function vAdmin() {
     var f = S.form, editing = f.id !== null;
-    var h = topBar(esc(S.me.nickname) + ' ' + badge(S.me.nickname) + ' · 사케 관리',
-      '<button class="link" data-a="logout">로그아웃</button>');
+    var h = topBar(esc(S.me.nickname) + ' ' + badge(S.me.nickname) + ' · 사케 관리') +
+      '<button class="back" data-a="nav" data-h="#/my">← MY</button>';
     var prev = f.image ? '<img src="' + f.image + '" alt="">' : (f.img_url && !f.clearImage ? '<img src="' + esc(f.img_url) + '" alt="">' : bottle(f.tint));
     var usingTemp = !f.image && (!f.img_url || f.clearImage);
     h += '<form class="panel stack" id="sakeform" novalidate>' +
@@ -521,16 +549,250 @@
       (hint ? '<span class="tiny">' + hint + '</span>' : '') + '</div>';
   }
 
+
+  /* ---------- 공통 조각: 레벨, 랭킹 줄 ---------- */
+  var ICON = {
+    home: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 10.5 12 3.5l8.5 7"/><path d="M5.5 9.5V20h4.5v-5.5h4V20h4.5V9.5"/></svg>',
+    ranking: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 4h9v5a4.5 4.5 0 0 1-9 0z"/><path d="M7.5 6H4.5v1a3 3 0 0 0 3 3M16.5 6h3v1a3 3 0 0 1-3 3M12 13.5V17M8.5 20h7M9.5 17h5"/></svg>',
+    tasting: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3h4v3c0 .9.4 1.4 1.1 2.4.8 1.1 1.3 2.6 1.3 4.6v6.3A1.7 1.7 0 0 1 14.7 21H9.3a1.7 1.7 0 0 1-1.7-1.7V13c0-2 .5-3.5 1.3-4.6C9.6 7.4 10 6.9 10 6z"/><path d="M7.6 13.5h8.8"/></svg>',
+    my: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5c1.4-3.6 4.2-5.5 7.5-5.5s6.1 1.9 7.5 5.5"/></svg>'
+  };
+  // 뱃지마다 다른 그림과 색 (24칸 기준 선 그림)
+  var BADGE_ART = {
+    first: ['#c9971a', '<path d="M6 8h12l-1.5 8a2 2 0 0 1-2 1.6h-5a2 2 0 0 1-2-1.6z"/><path d="M8.5 20.5h7"/>'],
+    comment10: ['#5230f5', '<path d="M4.5 5.5h15v9.5h-8l-4.5 3.5v-3.5H4.5z"/><path d="M8 9.2h8M8 11.8h5"/>'],
+    brewer5: ['#2f8f6b', '<path d="M3.5 11 12 4.5l8.5 6.5"/><path d="M6 9.5V19.5h12V9.5"/><path d="M10 19.5v-5h4v5"/>'],
+    origin5: ['#d9534f', '<path d="M12 21s-6.5-5.8-6.5-10.5a6.5 6.5 0 0 1 13 0C18.5 15.2 12 21 12 21z"/><circle cx="12" cy="10.5" r="2.3"/>'],
+    regular3: ['#e0426a', '<path d="M12 19.5s-7.5-4.6-7.5-9.7A4 4 0 0 1 12 7.6a4 4 0 0 1 7.5 2.2c0 5.1-7.5 9.7-7.5 9.7z"/>'],
+    polish5: ['#a8853f', '<ellipse cx="9" cy="12" rx="2.7" ry="5" transform="rotate(-18 9 12)"/><ellipse cx="15" cy="12" rx="2.7" ry="5" transform="rotate(18 15 12)"/>'],
+    dry3: ['#2f7fc1', '<path d="M12 4s-5.5 6.3-5.5 10a5.5 5.5 0 0 0 11 0C17.5 10.3 12 4 12 4z"/><path d="M5 19.5 19 5.5"/>'],
+    sweet3: ['#e3832a', '<circle cx="12" cy="12" r="4"/><path d="M8.4 10 4 7.3v9.4L8.4 14M15.6 10 20 7.3v9.4L15.6 14"/>'],
+    pioneer3: ['#127a8a', '<path d="M7 21V3.5"/><path d="M7 4.5h11l-3 4 3 4H7"/>'],
+    session3: ['#8a4fd1', '<path d="M2.8 8.5h5.4l-.8 5H3.6zM9.3 8.5h5.4l-.8 5h-3.8zM15.8 8.5h5.4l-.8 5h-3.8z"/><path d="M3.5 17.5h17"/>'],
+    weekend5: ['#3d4fa8', '<path d="M17 15.6A7 7 0 0 1 8.4 5.5a7.5 7.5 0 1 0 8.6 10.1z"/><path d="M17.5 4.5v3M16 6h3"/>'],
+    weekly4: ['#3e9a4f', '<rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M8.5 3.5v3.5M15.5 3.5v3.5M9 14.8l2 2 4-4.2"/>'],
+    month10: ['#b5532f', '<path d="M10.5 3h3v2.6c0 .8.4 1.3 1 2.1.7.9 1.1 2.1 1.1 3.7v7.4a1.4 1.4 0 0 1-1.4 1.4H9.8a1.4 1.4 0 0 1-1.4-1.4v-7.4c0-1.6.4-2.8 1.1-3.7.6-.8 1-1.3 1-2.1z"/><path d="M8.4 13.5h7.2"/>'],
+    perfect: ['#e0a300', '<path d="M12 3.8l2.5 5.1 5.6.8-4.1 4 1 5.6-5-2.7-5 2.7 1-5.6-4.1-4 5.6-.8z"/>'],
+    critic3: ['#4a5568', '<circle cx="10.5" cy="10.5" r="5.5"/><path d="M14.6 14.6 20 20"/><path d="M8 10.5h5"/>']
+  };
+  function badgeIcon(b) {
+    var art = BADGE_ART[b.id] || ['#5230f5', '<circle cx="12" cy="12" r="5"/>'];
+    return '<svg viewBox="0 0 40 40" aria-hidden="true"' + (b.got ? ' style="--bc:' + art[0] + '"' : '') + '>' +
+      '<circle class="bgc" cx="20" cy="20" r="18.5"/><g class="gl" transform="translate(8 8)">' + art[1] + '</g></svg>';
+  }
+
+  function tabbar(r) {
+    var cur = r.name === 'home' ? 'home' : r.name === 'ranking' ? 'ranking' : (r.name === 'my' || r.name === 'admin') ? 'my' : 'tasting';
+    var T = [['home', '#/', '홈'], ['ranking', '#/ranking', '랭킹'], ['tasting', '#/tasting', '테이스팅'], ['my', '#/my', 'MY']];
+    return '<nav class="tabbar" aria-label="메뉴"><div class="tbin">' + T.map(function (x) {
+      return '<button class="tb' + (cur === x[0] ? ' on' : '') + '" data-a="tabnav" data-h="' + x[1] + '"' + (cur === x[0] ? ' aria-current="page"' : '') + '>' +
+        ICON[x[0]] + '<span>' + x[2] + '</span></button>';
+    }).join('') + '</div></nav>';
+  }
+
+  function lvBlock(p) {
+    var L = p.level, pct = Math.max(0, Math.min(100, Math.round((L.progress || 0) * 100)));
+    return '<div class="lv"><div class="lvtop"><span class="lvchip num">Lv.' + L.lv + '</span><b class="lvtitle">' + esc(L.title) + '</b></div>' +
+      '<div class="bar" role="progressbar" aria-label="다음 레벨까지" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '"><i style="width:' + pct + '%"></i></div>' +
+      '<span class="tiny">' + (L.next ? '다음 레벨 \'' + esc(L.next.title) + '\'까지 ' + L.next.remain + '병' : '최고 레벨이에요') + '</span></div>';
+  }
+
+  function rankRow(it) {
+    return '<button class="rrow' + (it.rank <= 3 ? ' top r' + it.rank : '') + '" data-a="nav" data-h="#/sake/' + it.id + '">' +
+      '<span class="rk num">' + it.rank + '</span><span class="thumb">' + pic(it) + '</span>' +
+      '<span class="t"><b>' + esc(it.name) + '</b><span class="tiny">' + esc([it.brewer, it.origin].filter(Boolean).join(' · ') || ' ') + '</span></span>' +
+      '<span class="rs"><span class="rsv">' + starsHtml(it.avg, 'sm') + '<b class="num">' + f1(it.avg) + '</b></span><span class="tiny num">' + it.n + '명</span></span></button>';
+  }
+
+  /* ---------- 화면: 홈 ---------- */
+  function vHome() {
+    var h = topBar('기억력 한계를 극복하기 위한 사케 기록장'), d = S.home;
+    if (!d) return h + '<div class="loading">불러오는 중…</div>';
+    var me = d.me;
+    h += '<section class="panel lvcard"><p class="hello">' + esc(me.nickname) + (isAdmin() ? ' ' + badge(me.nickname) : '님') +
+      ', 지금까지 <b class="num">' + me.count + '병</b> 평가했어요</p>' + lvBlock(me) +
+      '<button class="link lvlink" data-a="nav" data-h="#/my">뱃지 ' + me.badges_got + ' / ' + me.badges_total + ' ›</button></section>';
+    if (d.total) {
+      h += d.todo
+        ? '<button class="todo" data-a="todo"><span>아직 안 마신 사케 <b class="num">' + d.todo + '병</b></span><span class="go">평가하러 가기 ›</span></button>'
+        : '<div class="todo done"><span>등록된 사케를 모두 평가했어요</span></div>';
+    }
+    h += '<div class="sec"><h2>새로 들어온 사케</h2>' + (d.fresh.length ? '<button class="link" data-a="nav" data-h="#/tasting">전체 ›</button>' : '') + '</div>';
+    h += d.fresh.length ? '<div class="hscroll">' + d.fresh.map(function (s) {
+      return '<button class="fcard" data-a="nav" data-h="#/sake/' + s.id + '"><span class="pic">' + pic(s) + (s.is_new ? '<span class="newtag">NEW</span>' : '') + '</span>' +
+        '<b>' + esc(s.name) + '</b><span class="tiny">' + esc(s.brewer || ' ') + (s.rated ? ' · 마심' : '') + '</span></button>';
+    }).join('') + '</div>' : '<div class="panel muted center">아직 등록된 사케가 없어요.</div>';
+    h += '<div class="sec"><h2>테이스팅 랭킹 TOP 3</h2><button class="link" data-a="ranktop">전체 ›</button></div>';
+    h += d.top.items.length ? '<div class="list">' + d.top.items.map(rankRow).join('') + '</div>'
+      : '<div class="panel muted center">아직 별점이 남겨진 사케가 없어요.</div>';
+    h += '<div class="sec"><h2>친구들의 최근 시음</h2></div>';
+    h += d.feed.length ? '<div class="feed">' + d.feed.map(function (f) {
+      return '<button class="fitem" data-a="nav" data-h="#/sake/' + f.sake.id + '"><span class="ft"><b>' + esc(f.nick) + '</b>' + (f.admin ? '<span class="chip op">운영자</span>' : '') +
+        '님이 <b>' + esc(f.sake.name) + '</b>' + josa(f.sake.name, '을', '를') + ' 평가했어요</span><span class="tiny num">' + ago(f.at) + '</span></button>';
+    }).join('') + '</div>' : '<div class="panel muted center">아직 친구들의 기록이 없어요.</div>';
+    return h;
+  }
+
+  /* ---------- 화면: 랭킹 ---------- */
+  var PERIOD_TABS = [['all', '전체'], ['month', '월간'], ['week', '주간'], ['day', '일간']];
+  function periodLabel(d) {
+    if (d.period === 'all') return '전체 기간';
+    if (d.period === 'day') return longDate(d.start);
+    if (d.period === 'month') { var p = parseYmd(d.start); return p.getFullYear() + '년 ' + (p.getMonth() + 1) + '월'; }
+    return md(d.start) + ' ~ ' + md(d.end);
+  }
+  function vRanking() {
+    var R = S.rank, d = R.data;
+    var h = topBar() + '<div class="pagehead"><h2 class="pagetitle">랭킹</h2><span class="tiny">만족도 별점 평균 · 마신 날짜 기준</span></div>';
+    h += '<div class="rtabs" role="tablist" aria-label="기간">' + PERIOD_TABS.map(function (x) {
+      return '<button role="tab" data-a="period" data-p="' + x[0] + '" aria-selected="' + (R.period === x[0]) + '">' + x[1] + '</button>';
+    }).join('') + '</div>';
+    var ready = d && d.period === R.period && (R.period === 'all' || d.offset === R.offset);
+    if (R.period !== 'all') {
+      h += '<div class="pnav"><button class="iconbtn" data-a="poffset" data-d="-1" aria-label="이전 기간">‹</button>' +
+        '<b class="num" id="plabel">' + (ready ? periodLabel(d) : '…') + '</b>' +
+        '<button class="iconbtn" data-a="poffset" data-d="1" aria-label="다음 기간"' + (R.offset >= 0 ? ' disabled' : '') + '>›</button></div>';
+    }
+    if (!ready) return h + '<div class="loading">불러오는 중…</div>';
+    if (!d.items.length) return h + '<div class="panel muted center">이 기간에는 평가된 사케가 없어요.</div>';
+    return h + '<div class="list">' + d.items.map(rankRow).join('') + '</div>';
+  }
+
+  /* ---------- 화면: MY ---------- */
+  function badgeTile(b) {
+    return '<div class="bdg' + (b.got ? ' got' : '') + '" data-badge="' + esc(b.id) + '"><span class="bi">' + badgeIcon(b) + '</span><b>' + esc(b.name) + '</b>' +
+      '<span class="tiny">' + esc(b.desc) + '</span>' +
+      (b.got ? '<span class="bst ok">획득</span>' : '<span class="bst num">' + b.cur + ' / ' + b.goal + '</span>') + '</div>';
+  }
+
+  function topCount(list, keyFn) {
+    var m = {}, best = null;
+    list.forEach(function (x) { var k = keyFn(x); if (k) m[k] = (m[k] || 0) + 1; });
+    Object.keys(m).forEach(function (k) { if (!best || m[k] > best.n) best = { k: k, n: m[k] }; });
+    return best;
+  }
+
+  function yearReport(d) {
+    var year = todayStr().slice(0, 4);
+    var list = d.reviews.filter(function (r) { return r.drank_on && r.drank_on.slice(0, 4) === year; });
+    var h = '<div class="sec"><h2>' + year + '년 리포트</h2></div>';
+    if (!list.length) return h + '<div class="panel muted center">올해는 아직 기록이 없어요.</div>';
+    var best = list.filter(function (r) { return r.stars != null; }).sort(function (a, b) { return b.stars - a.stars || String(b.drank_on).localeCompare(String(a.drank_on)); })[0];
+    var br = topCount(list, function (r) { return (r.sake.brewer || '').trim(); });
+    var og = topCount(list, function (r) { return (r.sake.origin || '').trim(); });
+    var mo = topCount(list, function (r) { return r.drank_on.slice(0, 7); });
+    function tile(label, value, sub) { return '<div class="rp"><span class="tiny">' + label + '</span><b>' + value + '</b>' + (sub ? '<span class="tiny num">' + sub + '</span>' : '') + '</div>'; }
+    return h + '<div class="report panel">' +
+      '<div class="rp big"><span class="tiny">올해 마신 사케</span><b class="num">' + list.length + '병</b></div>' +
+      tile('가장 높게 준 사케', best ? esc(best.sake.name) : '—', best ? '★ ' + best.stars : '') +
+      tile('가장 많이 마신 달', mo ? (+mo.k.slice(5, 7)) + '월' : '—', mo ? mo.n + '병' : '') +
+      tile('가장 많이 마신 양조장', br ? esc(br.k) : '—', br ? br.n + '병' : '') +
+      tile('가장 많이 마신 원산지', og ? esc(og.k) : '—', og ? og.n + '병' : '') + '</div>';
+  }
+
+  function myReview(r) {
+    return '<button class="mrev" data-a="nav" data-h="#/sake/' + r.sake.id + '"><span class="thumb">' + pic(r.sake) + '</span><span class="t">' +
+      '<b>' + esc(r.sake.name) + '</b><span class="mrow">' + (r.stars != null ? starsHtml(r.stars, 'sm') + '<span class="num tiny">' + r.stars + '</span>' : '<span class="tiny">별점 없음</span>') +
+      (r.drank_on ? '<span class="tiny">· ' + md(r.drank_on) + ' 마심</span>' : '') + '</span>' +
+      (r.comment ? '<span class="cm">' + esc(r.comment) + '</span>' : '') + '</span></button>';
+  }
+
+  function acctRow(k, label, body) {
+    var open = S.acct === k;
+    return '<button class="menurow" data-a="acct" data-k="' + k + '" aria-expanded="' + open + '"><span>' + label + '</span><span class="go" aria-hidden="true">' + (open ? '−' : '›') + '</span></button>' +
+      (open ? '<div class="afbox">' + body + '</div>' : '');
+  }
+
+  function acctHtml(d) {
+    var err = S.acctErr ? '<p class="err" role="alert">' + esc(S.acctErr) + '</p>' : '';
+    if (d.role === 'admin') {
+      return '<p class="tiny" style="margin:0 0 6px">운영자 계정의 닉네임·비밀번호는 Vercel 설정(ADMIN_NICK, ADMIN_PASSWORD)에서 바꿔요.</p>' +
+        '<button class="menurow" data-a="logout"><span>로그아웃</span><span class="go">›</span></button>';
+    }
+    return acctRow('nick', '닉네임 변경',
+        '<form id="nickform" class="stack" novalidate><div class="field"><label for="newnick">새 닉네임</label><input id="newnick" maxlength="12" value="' + esc(d.nickname) + '"></div>' + err +
+        '<button class="btn" type="submit">닉네임 바꾸기</button><span class="tiny">바꾸면 예전에 쓴 리뷰에도 새 닉네임이 보여요.</span></form>') +
+      acctRow('pw', '비밀번호 변경',
+        '<form id="pwform" class="stack" novalidate><div class="field"><label for="curpw">지금 비밀번호</label><input id="curpw" type="password" autocomplete="current-password"></div>' +
+        '<div class="field"><label for="newpw">새 비밀번호</label><input id="newpw" type="password" autocomplete="new-password" placeholder="4자 이상"></div>' +
+        '<div class="field"><label for="newpw2">새 비밀번호 확인</label><input id="newpw2" type="password" autocomplete="new-password"></div>' + err +
+        '<button class="btn" type="submit">비밀번호 바꾸기</button></form>') +
+      '<button class="menurow" data-a="logout"><span>로그아웃</span><span class="go" aria-hidden="true">›</span></button>' +
+      acctRow('bye', '회원 탈퇴',
+        '<form id="byeform" class="stack" novalidate><p class="tiny" style="margin:0">탈퇴하면 내가 쓴 리뷰 ' + d.reviews.length + '개와 찜이 모두 지워지고, 되돌릴 수 없어요.</p>' +
+        (S.byeConfirm
+          ? err + '<p class="err" style="margin:0">정말 탈퇴할까요? 아래 버튼을 누르면 바로 탈퇴돼요.</p><div class="row2"><button type="button" class="btn ghost" data-a="bye-cancel">취소</button><button class="btn danger" type="submit">정말 탈퇴</button></div>'
+          : '<div class="field"><label for="byepw">비밀번호 확인</label><input id="byepw" type="password" autocomplete="current-password"></div>' + err + '<button class="btn danger" type="submit">탈퇴하기</button>') +
+        '</form>');
+  }
+
+  function vMy() {
+    var h = topBar(), d = S.my;
+    if (!d) return h + '<div class="loading">불러오는 중…</div>';
+    h += '<section class="panel lvcard"><div class="mytop"><b class="mynick">' + esc(d.nickname) + '</b>' + (d.role === 'admin' ? badge(d.nickname) : '') + '</div>' + lvBlock(d) +
+      '<div class="mystats"><div><b class="num">' + d.count + '병</b><span class="tiny">평가</span></div>' +
+      '<div><b class="num">' + d.badges_got + '/' + d.badges_total + '</b><span class="tiny">뱃지</span></div>' +
+      '<div><b class="num">' + (d.avg_stars != null ? '★ ' + f1(d.avg_stars) : '—') + '</b><span class="tiny">내가 준 평균 별점</span></div></div></section>';
+    if (d.role === 'admin') h += '<button class="menurow panel" data-a="nav" data-h="#/admin"><span>운영자 메뉴 · 사케 등록·관리</span><span class="go">›</span></button>';
+    h += yearReport(d);
+    h += '<div class="sec"><h2>뱃지 모음 <span class="num muted">' + d.badges_got + '/' + d.badges_total + '</span></h2></div><div class="badges">' + d.badges.map(badgeTile).join('') + '</div>';
+    h += '<div class="sec"><h2>별점이 비슷한 친구</h2></div>';
+    h += d.friends.length
+      ? '<div class="list">' + d.friends.map(function (f) {
+          return '<div class="friend"><b>' + esc(f.nick) + '</b>' + (f.admin ? '<span class="chip op">운영자</span>' : '') +
+            '<span class="tiny num">함께 마신 사케 ' + f.common + '병</span><span class="match num">일치도 ' + f.match + '%</span></div>';
+        }).join('') + '</div><p class="tiny" style="margin:0">같은 사케에 준 별점이 비슷할수록 일치도가 높아요.</p>'
+      : '<div class="panel muted center">아직 비교할 친구가 없어요.<br><span class="tiny">같은 사케를 2병 이상 함께 평가한 친구가 생기면 보여요.</span></div>';
+    h += '<div class="sec"><h2>마셔보고 싶어요 <span class="num muted">' + d.wishes.length + '</span></h2></div>';
+    h += d.wishes.length ? '<div class="list">' + d.wishes.map(mini).join('') + '</div>'
+      : '<div class="panel muted center">사케 화면에서 ♡ 찜을 누르면 여기에 모여요.</div>';
+    var rv = d.reviews.slice();
+    if (S.mySort === 'stars') rv.sort(function (a, b) { return (b.stars || 0) - (a.stars || 0) || String(b.at).localeCompare(String(a.at)); });
+    h += '<div class="sec"><h2>내가 쓴 리뷰 <span class="num muted">' + rv.length + '</span></h2>' +
+      (rv.length > 1 ? '<span class="seg minis" role="group" aria-label="리뷰 정렬"><button data-a="mysort" data-s="new" aria-pressed="' + (S.mySort === 'new') + '">최신순</button><button data-a="mysort" data-s="stars" aria-pressed="' + (S.mySort === 'stars') + '">별점순</button></span>' : '') + '</div>';
+    h += rv.length ? '<div class="list" id="myrevs">' + rv.map(myReview).join('') + '</div><button class="btn ghost" data-a="csv">내 기록 엑셀로 저장</button>'
+      : '<div class="panel muted center">아직 쓴 리뷰가 없어요.</div>';
+    h += '<div class="sec"><h2>계정</h2></div><div class="panel acct">' + acctHtml(d) + '</div>';
+    return h;
+  }
+
+  function myCsv() {
+    var rows = [['사케', '양조장', '원산지', '마신 날짜', '만족도 별점'].concat(ITEMS.map(function (x) { return x.n; })).concat(['한줄평', '작성일'])];
+    S.my.reviews.forEach(function (r) {
+      rows.push([r.sake.name, r.sake.brewer, r.sake.origin, r.drank_on || '', r.stars == null ? '' : r.stars].concat(r.v || ['', '', '', '', '']).concat([r.comment, stamp(r.at)]));
+    });
+    return '﻿' + rows.map(function (row) {
+      return row.map(function (c) { c = String(c == null ? '' : c); return /[",\n\r]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(',');
+    }).join('\r\n');
+  }
+  function downloadCsv() {
+    try {
+      var url = URL.createObjectURL(new Blob([myCsv()], { type: 'text/csv;charset=utf-8' }));
+      var a = document.createElement('a');
+      a.href = url; a.download = '사케치북_' + S.my.nickname + '_' + todayStr() + '.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+      toast('엑셀에서 열 수 있는 파일로 저장했어요');
+    } catch (e) { toast('이 브라우저에서는 파일 저장이 안 돼요'); }
+  }
+  window.SKDEBUG = { csv: function () { return S.my ? myCsv() : ''; } };
+
   /* ---------- 그리기 ---------- */
   var lastView = '';
   function render() {
     var app = $('app'), r = route(), html;
     if (!S.me) html = vAuth();
-    else if (r.name === 'admin') html = isAdmin() ? vAdmin() : vHome();
+    else if (r.name === 'admin') html = isAdmin() ? vAdmin() : vTasting();
     else if (r.name === 'detail') html = vDetail(r.id);
     else if (r.name === 'rate') html = vRate(r.id);
+    else if (r.name === 'tasting') html = vTasting();
+    else if (r.name === 'ranking') html = vRanking();
+    else if (r.name === 'my') html = vMy();
     else html = vHome();
-    app.innerHTML = html;
+    // 하단 메뉴: 로그인 후 항상 보이고, 평가 입력 화면에서만 숨겨요
+    var showBar = !!S.me && r.name !== 'rate';
+    app.innerHTML = html + (showBar ? tabbar(r) : '');
+    document.body.classList.toggle('has-tabbar', showBar);
     var key = (S.me ? S.me.role : '-') + location.hash;
     if (key !== lastView) { window.scrollTo(0, 0); lastView = key; }
   }
@@ -538,6 +800,18 @@
   /* ---------- 데이터 불러오기 ---------- */
   function loadSakes() {
     return api('/api/sakes').then(function (d) { S.sakes = d.sakes; render(); }).catch(handleErr);
+  }
+  function loadHome() {
+    return api('/api/home').then(function (d) { S.home = d; if (route().name === 'home') render(); }).catch(handleErr);
+  }
+  function loadMy() {
+    return api('/api/my').then(function (d) { S.my = d; if (route().name === 'my') render(); }).catch(handleErr);
+  }
+  function loadRanking() {
+    var p = S.rank.period, o = S.rank.period === 'all' ? 0 : S.rank.offset;
+    return api('/api/ranking?period=' + p + '&offset=' + o).then(function (d) {
+      if (S.rank.period === p && (p === 'all' || S.rank.offset === o)) { S.rank.data = d; if (route().name === 'ranking') render(); }
+    }).catch(handleErr);
   }
   function loadDetail(id) {
     S.loadErr = '';
@@ -552,22 +826,29 @@
   }
   function handleErr(e) {
     if (e && e.status === 401) {
-      S.me = null; S.sakes = null; S.detail = null; S.authTab = 'login'; S.showOpLogin = false;
-      S.authErr = '로그인이 끝났어요. 다시 로그인해 주세요.';
+      resetAll();
+      S.authErr = e.message && e.message !== '로그인이 필요해요.' ? e.message : '로그인이 끝났어요. 다시 로그인해 주세요.';
       render();
       return;
     }
     toast(e && e.message ? e.message : '문제가 생겼어요.');
   }
 
+  function resetAll() {
+    S.me = null; S.sakes = null; S.detail = null; S.draft = null; S.home = null; S.my = null; S.rank.data = null;
+    S.form = clone(EMPTY_FORM); S.authErr = ''; S.showOpLogin = false; S.authTab = 'login';
+    S.acct = ''; S.acctErr = ''; S.byeConfirm = false; S.byePw = '';
+  }
+
   function onRoute() {
     S.delId = null;
     var r = route();
     if (!S.me) return render();
-    if (r.name === 'home' || r.name === 'admin') {
-      render();
-      loadSakes();
-    } else {
+    if (r.name === 'home') { render(); loadHome(); }
+    else if (r.name === 'tasting' || r.name === 'admin') { render(); loadSakes(); }
+    else if (r.name === 'ranking') { render(); loadRanking(); }
+    else if (r.name === 'my') { S.acct = ''; S.acctErr = ''; S.byeConfirm = false; S.byePw = ''; render(); loadMy(); }
+    else {
       if (!S.detail || S.detail.sake.id !== r.id) S.detail = null;
       if (r.name === 'detail') S.draft = null;
       render();
@@ -605,8 +886,8 @@
   function afterLogin(d) {
     S.me = { role: d.role, nickname: d.nickname };
     S.authErr = ''; S.showOpLogin = false; S.busy = false; S.authTab = 'login';
-    S.sakes = null; S.detail = null; S.draft = null; S.form = clone(EMPTY_FORM);
-    // 운영자·게스트 모두 첫 화면은 사케 목록
+    S.sakes = null; S.detail = null; S.draft = null; S.form = clone(EMPTY_FORM); S.home = null; S.my = null; S.rank.data = null;
+    // 운영자·게스트 모두 첫 화면은 홈
     if (location.hash !== '#/' && location.hash !== '') location.hash = '#/';
     else onRoute();
     toast(d.nickname + '님, 반가워요');
@@ -640,9 +921,12 @@
     if (!(dr.s >= 0.5 && dr.s <= 5)) { er.textContent = '만족도 별점을 골라 주세요.'; er.hidden = false; var sp = document.querySelector('.starpick'); if (sp && sp.scrollIntoView) sp.scrollIntoView({ block: 'center' }); return; }
     S.busy = true; render();
     api('/api/rate', { method: 'POST', body: { sakeId: id, v: dr.v, comment: dr.t.trim(), drankOn: dr.d, stars: dr.s } })
-      .then(function () {
-        S.busy = false; S.draft = null; S.detail = null; S.sakes = null;
-        toast('저장했어요. 평균과 리뷰가 열렸어요');
+      .then(function (res) {
+        S.busy = false; S.draft = null; S.detail = null; S.sakes = null; S.home = null; S.my = null; S.rank.data = null;
+        var parts = [];
+        if (res && res.levelUp) parts.push('레벨 업! Lv.' + res.levelUp.lv + ' ' + res.levelUp.title);
+        if (res && res.newBadges && res.newBadges.length) parts.push('새 뱃지: ' + res.newBadges.map(function (b) { return b.name; }).join(', '));
+        toast(parts.length ? parts.join(' · ') : '저장했어요. 평균과 리뷰가 열렸어요', parts.length ? 4000 : 2400);
         go('#/sake/' + id);
       })
       .catch(function (e) {
@@ -651,6 +935,65 @@
         render();
         var er2 = $('rateerr'); if (er2) { er2.textContent = e.message; er2.hidden = false; }
       });
+  }
+
+  function acctFail(e, keepConfirm) {
+    if (e.status === 401) return handleErr(e);
+    S.acctErr = e.message;
+    if (!keepConfirm) { S.byeConfirm = false; S.byePw = ''; }
+    render();
+  }
+  function submitNick() {
+    var v = $('newnick').value.trim();
+    if (!v) { S.acctErr = '새 닉네임을 입력해 주세요.'; render(); return; }
+    S.busy = true;
+    api('/api/auth', { method: 'POST', body: { action: 'rename', nickname: v } }).then(function (d) {
+      S.busy = false;
+      S.me.nickname = d.nickname; S.acct = ''; S.acctErr = '';
+      S.home = null; S.sakes = null; S.detail = null; S.my = null;
+      toast('닉네임을 \'' + d.nickname + '\'' + josa(d.nickname, '으로', '로') + ' 바꿨어요');
+      render(); loadMy();
+    }).catch(function (e) { S.busy = false; acctFail(e); var n = $('newnick'); if (n) n.value = v; });
+  }
+  function submitPw() {
+    var cur = $('curpw').value, n1 = $('newpw').value, n2 = $('newpw2').value;
+    if (!cur) { S.acctErr = '지금 비밀번호를 입력해 주세요.'; return render(); }
+    if (n1.length < 4) { S.acctErr = '새 비밀번호는 4자 이상이에요.'; return render(); }
+    if (n1 !== n2) { S.acctErr = '새 비밀번호가 서로 달라요. 다시 확인해 주세요.'; return render(); }
+    S.busy = true;
+    api('/api/auth', { method: 'POST', body: { action: 'password', password: cur, newPassword: n1 } }).then(function () {
+      S.busy = false; S.acct = ''; S.acctErr = '';
+      toast('비밀번호를 바꿨어요');
+      render();
+    }).catch(function (e) { S.busy = false; acctFail(e); });
+  }
+  function submitBye() {
+    if (!S.byeConfirm) {
+      var pw = $('byepw').value;
+      if (!pw) { S.acctErr = '비밀번호를 입력해 주세요.'; return render(); }
+      S.byePw = pw; S.byeConfirm = true; S.acctErr = ''; return render();
+    }
+    S.busy = true;
+    api('/api/auth', { method: 'POST', body: { action: 'withdraw', password: S.byePw } }).then(function () {
+      S.busy = false; resetAll();
+      toast('탈퇴했어요. 그동안 함께해 줘서 고마워요', 3500);
+      if (location.hash && location.hash !== '#/') location.hash = '#/'; else render();
+    }).catch(function (e) { S.busy = false; acctFail(e); });
+  }
+
+  function toggleWish(id) {
+    if (!S.detail || S.detail.sake.id !== id) return;
+    var on = !S.detail.wished;
+    S.detail.wished = on;
+    (S.sakes || []).forEach(function (s) { if (s.id === id) s.wished = on; });
+    S.my = null;
+    render();
+    toast(on ? '찜했어요. MY에서 모아볼 수 있어요' : '찜을 풀었어요');
+    api('/api/wish', { method: 'POST', body: { sakeId: id, on: on } }).catch(function (e) {
+      if (S.detail && S.detail.sake.id === id) S.detail.wished = !on;
+      (S.sakes || []).forEach(function (s) { if (s.id === id) s.wished = !on; });
+      render(); handleErr(e);
+    });
   }
 
   function startEdit(id) {
@@ -707,7 +1050,7 @@
     else if (a === 'oplogin-toggle') { S.showOpLogin = !S.showOpLogin; S.authErr = ''; render(); }
     else if (a === 'logout') {
       api('/api/auth', { method: 'POST', body: { action: 'logout' } }).catch(function () {}).then(function () {
-        S.me = null; S.sakes = null; S.detail = null; S.draft = null; S.form = clone(EMPTY_FORM); S.authErr = ''; S.showOpLogin = false; S.authTab = 'login';
+        resetAll();
         if (location.hash && location.hash !== '#/') location.hash = '#/'; else render();
       });
     }
@@ -742,13 +1085,35 @@
     else if (a === 'day') { var dv = el.getAttribute('data-d'); S.F.day = dv && S.F.day !== dv ? dv : null; render(); }
     else if (a === 'brewer' || a === 'origin') {
       S.F.view = 'list'; S.F.tab = 'all'; S.F.scope = a; S.F.q = el.getAttribute('data-b') || '';
-      go('#/');
+      go('#/tasting');
     }
     else if (a === 'home') {
       e.preventDefault();
-      S.F.view = 'list'; S.F.tab = 'all'; S.F.q = ''; S.F.scope = 'all'; S.F.day = null; S.F.month = null; S.draft = null;
+      S.draft = null;
       if (S.me && location.hash && location.hash !== '#/') go('#/'); else { render(); window.scrollTo(0, 0); }
     }
+    else if (a === 'tabnav') {
+      var th = el.getAttribute('data-h');
+      if (location.hash === th || (th === '#/' && !location.hash)) { window.scrollTo(0, 0); onRoute(); } else go(th);
+    }
+    else if (a === 'todo') { S.F.view = 'list'; S.F.tab = 'todo'; S.F.q = ''; go('#/tasting'); }
+    else if (a === 'ranktop') { S.rank.period = 'all'; S.rank.offset = 0; go('#/ranking'); }
+    else if (a === 'period') { S.rank.period = el.getAttribute('data-p'); S.rank.offset = 0; render(); loadRanking(); }
+    else if (a === 'poffset') {
+      var od = +el.getAttribute('data-d');
+      if (od > 0 && S.rank.offset >= 0) return;
+      S.rank.offset += od; render(); loadRanking();
+    }
+    else if (a === 'wish') { toggleWish(+el.getAttribute('data-id')); }
+    else if (a === 'mysort') { S.mySort = el.getAttribute('data-s'); render(); }
+    else if (a === 'acct') {
+      var k = el.getAttribute('data-k');
+      S.acct = S.acct === k ? '' : k; S.acctErr = ''; S.byeConfirm = false; S.byePw = '';
+      render();
+      var first = document.querySelector('.afbox input'); if (first) first.focus();
+    }
+    else if (a === 'bye-cancel') { S.byeConfirm = false; S.byePw = ''; S.acctErr = ''; render(); }
+    else if (a === 'csv') { if (S.my) downloadCsv(); }
     else if (a === 'star') {
       if (!S.draft) return;
       var sv = parseFloat(el.getAttribute('data-n'));
@@ -773,6 +1138,9 @@
     if (e.target.id === 'authform') submitAuth();
     else if (e.target.id === 'opform') submitOp();
     else if (e.target.id === 'sakeform') submitSake();
+    else if (e.target.id === 'nickform') submitNick();
+    else if (e.target.id === 'pwform') submitPw();
+    else if (e.target.id === 'byeform') submitBye();
   });
 
   document.addEventListener('input', function (e) {
@@ -827,7 +1195,7 @@
   try {
     var saved = JSON.parse(localStorage.getItem('sk-view') || '{}');
     if (saved.view === 'list' || saved.view === 'cal') S.F.view = saved.view;
-    if (['all', 'rated', 'todo'].indexOf(saved.tab) >= 0) S.F.tab = saved.tab;
+    if (['all', 'rated', 'todo', 'wish'].indexOf(saved.tab) >= 0) S.F.tab = saved.tab;
     if (SORTS.some(function (x) { return x[0] === saved.sort; })) S.F.sort = saved.sort;
   } catch (e) { /* 저장소를 못 쓰면 기본값 */ }
   var origRender = render;
