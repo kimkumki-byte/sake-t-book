@@ -4,17 +4,18 @@ const store = require('../lib/store');
 const core = require('../lib/core');
 const v = require('../lib/validate');
 const { HttpError, handler, send } = require('../lib/http');
-const { requireLiveSession } = require('../lib/auth');
+const { requireSession, assertLive } = require('../lib/auth');
 
 module.exports = handler(['POST'], async (req, res) => {
-  const me = await requireLiveSession(req, store);
+  const me = requireSession(req);
   const sakeId = parseInt(req.body.sakeId, 10);
   if (!Number.isInteger(sakeId)) throw new HttpError(400, '사케를 알 수 없어요.');
   const scores = v.scores(req.body.v);
   const comment = v.text(req.body.comment, 50, '한줄평');
   const drank_on = v.drankOn(req.body.drankOn);
   const stars = v.stars(req.body.stars);
-  const [sakes, ratings] = await Promise.all([store.listSakes(), store.allRatings()]);
+  // 계정 확인과 계산용 데이터 불러오기를 동시에
+  const [, sakes, ratings] = await Promise.all([assertLive(me, store), store.listSakes(), store.allRatings()]);
   if (!sakes.some((s) => s.id === sakeId)) throw new HttpError(404, '등록되지 않았거나 삭제된 사케예요.');
 
   const before = core.profile(me.nick, sakes, ratings);

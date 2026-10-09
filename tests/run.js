@@ -16,11 +16,13 @@ function freshServer() {
   store = createFakeStore();
   Object.keys(require.cache).forEach((k) => { if (k.startsWith(ROOT) && !k.includes('node_modules') && !k.includes('/tests/')) delete require.cache[k]; });
   require.cache[require.resolve('../lib/store')] = { id: 'store', filename: 'store', loaded: true, exports: store };
-  return {
-    me: require('../api/me'), auth: require('../api/auth'), sakes: require('../api/sakes'),
-    sake: require('../api/sake'), rate: require('../api/rate'),
-    home: require('../api/home'), ranking: require('../api/ranking'), my: require('../api/my'), wish: require('../api/wish'),
-  };
+  // 실제 배포처럼 /api/[route].js 하나를 거쳐서 각 화면 코드로 가요
+  const D = require('../api/[route]');
+  const via = (name) => (req, res) => { req.query = { ...(req.query || {}), route: name }; return D(req, res); };
+  const X = {};
+  ['me', 'auth', 'sakes', 'sake', 'rate', 'home', 'ranking', 'my', 'wish'].forEach((k) => { X[k] = via(k); });
+  X.dispatch = D;
+  return X;
 }
 
 // Vercel 함수에 요청 보내기를 흉내 내요
@@ -340,15 +342,20 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   const setRoutes = (X) => { ['me', 'auth', 'sakes', 'sake', 'rate', 'home', 'ranking', 'my', 'wish'].forEach((k) => { routes['/api/' + k] = X[k]; }); };
   setRoutes(A);
 
-  function browser() {
+  // opts: { storage: 미리 넣어 둘 localStorage, jar: 로그인 쿠키, gate: 이 Promise가 풀릴 때까지 서버 응답을 붙잡아 둠 }
+  function browser(opts = {}) {
     const dom = new JSDOM(html, { url: 'https://sake.test/', runScripts: 'outside-only', pretendToBeVisual: true });
     const w = dom.window;
-    let jar = '';
+    if (opts.storage) Object.keys(opts.storage).forEach((k) => w.localStorage.setItem(k, opts.storage[k]));
+    let jar = opts.jar || '';
     const errors = [];
+    const calls = [];
     w.addEventListener('error', (e) => errors.push(e.message));
     w.scrollTo = () => {};
     w.fetch = async (url, init = {}) => {
       const u = new URL(url, 'https://sake.test');
+      calls.push(u.pathname + u.search);
+      if (opts.gate) await opts.gate;
       const fn = routes[u.pathname];
       if (!fn) return { ok: false, status: 404, json: async () => ({}) };
       const r = await call(fn, {
@@ -371,7 +378,8 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     const tab = async (label) => { await click($$('.tabbar .tb').find((x) => x.textContent.trim() === label)); await settle(); };
     const logout = async () => { await tab('MY'); await settle(); await click($('[data-a="logout"]')); };
     const toAdmin = async () => { await tab('MY'); await settle(); await click($('[data-h="#/admin"]')); await settle(); };
-    return { w, $, $$, text, settle, click, type, submit, btn, tab, logout, toAdmin, errors };
+    const dump = () => { const o = {}; for (let i = 0; i < w.localStorage.length; i++) { const k = w.localStorage.key(i); o[k] = w.localStorage.getItem(k); } return o; };
+    return { w, $, $$, text, settle, click, type, submit, btn, tab, logout, toAdmin, errors, calls, dump, jar: () => jar };
   }
 
   // 1) 운영자: 등록 → 수정 → 평가
@@ -1298,11 +1306,186 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.deepEqual(o.errors, []);
     });
     await test('[화면] 새 화면들에서 스크립트 오류 없음', async () => { assert.deepEqual(u.errors, []); });
+
+    /* ---------- 속도: 미리 받기 · 기억해 둔 화면 ---------- */
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const fast = browser(); await fast.settle();
+    await test('[속도] 로그인 후 잠시 뒤 다른 탭 데이터를 미리 받아 둠 → 탭을 누르면 바로 보임', async () => {
+      await fast.click(fast.btn('처음이에요')); fast.type('#nick', '빠른손님'); fast.type('#pw', 'fast1'); await fast.submit('#authform');
+      await wait(900); await fast.settle();
+      ['/api/home', '/api/sakes', '/api/ranking?period=all&offset=0', '/api/my'].forEach((u) => assert.ok(fast.calls.includes(u), u + ' 미리 받기'));
+      // 탭을 누르는 순간(서버 응답 전)에도 '불러오는 중'이 아니라 내용이 보여야 함
+      fast.$$('.tabbar .tb').find((x) => x.textContent.trim() === '랭킹').click();
+      assert.doesNotMatch(fast.text(), /불러오는 중/);
+      fast.$$('.tabbar .tb').find((x) => x.textContent.trim() === 'MY').click();
+      assert.doesNotMatch(fast.text(), /불러오는 중/);
+      assert.match(fast.text(), /빠른손님/);
+      fast.$$('.tabbar .tb').find((x) => x.textContent.trim() === '테이스팅').click();
+      assert.doesNotMatch(fast.text(), /불러오는 중/);
+      await fast.settle(); await fast.settle();
+      assert.deepEqual(fast.errors, []);
+    });
+    await test('[속도] 다시 열면 서버 응답 전에 기억해 둔 홈이 바로 보이고, 응답이 오면 새로 고침', async () => {
+      const saved = fast.dump();
+      assert.ok(saved['sk-cache-v1'], '기억해 둔 화면이 있어야 함');
+      let open; const gate = new Promise((r) => { open = r; });
+      const again = browser({ storage: saved, jar: fast.jar(), gate });
+      await again.settle();
+      assert.ok(again.$('.lvcard'), '서버 응답 전에도 홈이 보여야 함');
+      assert.match(again.text(), /빠른손님/);
+      assert.doesNotMatch(again.text(), /불러오는 중/);
+      assert.ok(again.calls.includes('/api/me') && again.calls.includes('/api/home'), '서버 확인과 홈 데이터를 동시에 요청');
+      open(); await again.settle(); await again.settle();
+      assert.ok(again.$('.lvcard'));
+      assert.deepEqual(again.errors, []);
+    });
+    await test('[속도] 로그인이 끝난 기기에서는 기억해 둔 화면을 지우고 로그인 화면으로', async () => {
+      const saved = fast.dump();
+      const ex = browser({ storage: saved, jar: '' });
+      await ex.settle(); await ex.settle();
+      assert.ok(ex.$('#authform'), '로그인 화면');
+      assert.match(ex.text(), /로그인이 끝났어요/);
+      assert.equal(ex.w.localStorage.getItem('sk-cache-v1'), null);
+      assert.doesNotMatch(ex.text(), /빠른손님님/);
+    });
+    await test('[속도] 다른 사람으로 로그인된 기기: 기억해 둔 화면은 버리고 실제 계정으로', async () => {
+      const saved = fast.dump();
+      const c = JSON.parse(saved['sk-cache-v1']); c.nick = '남의손님'; saved['sk-cache-v1'] = JSON.stringify(c);
+      const other = browser({ storage: saved, jar: fast.jar() });
+      await other.settle(); await other.settle(); await other.settle();
+      assert.match(other.text(), /빠른손님/);
+      assert.doesNotMatch(other.text(), /남의손님/);
+      assert.equal(JSON.parse(other.w.localStorage.getItem('sk-cache-v1') || '{"nick":"빠른손님"}').nick, '빠른손님');
+    });
+    await test('[속도] 로그아웃하면 이 기기에 기억해 둔 화면도 지움', async () => {
+      await fast.logout(); await fast.settle();
+      assert.ok(fast.$('#authform'));
+      assert.equal(fast.w.localStorage.getItem('sk-cache-v1'), null);
+    });
+    await test('[속도] 한 번 본 사케 상세는 다시 열 때 바로 보임', async () => {
+      const b = browser(); await b.settle();
+      await b.click(b.btn('처음이에요')); b.type('#nick', '상세손님'); b.type('#pw', 'look1'); await b.submit('#authform');
+      const id = store._db.sakes[0].id;
+      b.w.location.hash = '#/sake/' + id; await b.settle(); await b.settle();
+      assert.ok(b.$('.hero'));
+      b.w.location.hash = '#/tasting'; await b.settle();
+      b.w.location.hash = '#/sake/' + id;
+      await new Promise((r) => setTimeout(r, 0));
+      assert.ok(b.$('.hero'), '다시 열 때 서버를 기다리지 않고 바로 보여야 함');
+      await b.settle();
+      assert.deepEqual(b.errors, []);
+    });
   }
+
+  /* ================= 속도 개선 점검 ================= */
+  await test('[속도] API 함수는 하나(api/[route].js)만 있고, 모르는 경로는 404', async () => {
+    const files = fs.readdirSync(path.join(ROOT, 'api'));
+    assert.deepEqual(files, ['[route].js']);
+    const X = freshServer();
+    const r = await call(X.dispatch, { query: { route: 'nope' } });
+    assert.equal(r.status, 404);
+    const r2 = await call(X.dispatch, { query: { route: '__proto__' } });
+    assert.equal(r2.status, 404);
+  });
+  await test('[속도] 깨우기 주소(/api/ping): 로그인 없이 ok, 데이터베이스도 한 번 조회, 개인 정보 없음', async () => {
+    const X = freshServer();
+    const r = await call(X.dispatch, { query: { route: 'ping' } });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { ok: true });
+    assert.equal(store._db.pings, 1);
+    const p = await call(X.dispatch, { method: 'POST', query: { route: 'ping' } });
+    assert.equal(p.status, 405);
+  });
+  await test('[속도] 경로 이름(route)은 각 화면 코드의 query에 섞이지 않음', async () => {
+    const D = freshServer().dispatch;
+    let seen = null;
+    const fake = { query: { route: 'me', x: '1' }, method: 'GET', headers: {} };
+    const orig = require('../routes/me');
+    await new Promise((resolve) => {
+      const res = { setHeader() {}, status() { return this; }, json() { seen = fake.query; resolve(); } };
+      D(fake, res);
+    });
+    assert.deepEqual(seen, { x: '1' });
+    assert.ok(orig);
+  });
+  await test('[속도] 예전 jsonwebtoken으로 만든 로그인 쿠키도 그대로 인정 (재로그인 필요 없음)', async () => {
+    const X = freshServer();
+    const old = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiZ3Vlc3QiLCJuaWNrIjoi7Jib7IaQ64uYIiwiaWF0IjoxNzkwMDAwMDAwLCJleHAiOjQxMDAwMDAwMDB9.7qEJok34Q3uL3wD2hPRS3bX4H2mFu6CX2yjVJdqtOb0';
+    const r = await call(X.me, { cookie: 'sk=' + old });
+    assert.equal(r.body.nickname, '옛손님');
+    assert.equal(r.body.role, 'guest');
+    const bad = await call(X.me, { cookie: 'sk=' + old.slice(0, -2) + 'xx' });
+    assert.equal(bad.body.role, null);
+  });
+  await test('[속도] 새 로그인 쿠키: 만료·위조·alg none 거부', async () => {
+    delete require.cache[require.resolve('../lib/auth')];
+    const a = require('../lib/auth');
+    const k = 'k'.repeat(32);
+    const t = a.signToken({ role: 'guest', nick: '가' }, k, 60);
+    assert.equal(a.verifyToken(t, k).nick, '가');
+    assert.equal(a.verifyToken(t, 'z'.repeat(32)), null);
+    assert.equal(a.verifyToken(a.signToken({ nick: '가' }, k, -5), k), null);
+    const none = Buffer.from('{"alg":"none"}').toString('base64url') + '.' + t.split('.')[1] + '.';
+    assert.equal(a.verifyToken(none, k), null);
+    assert.equal(a.verifyToken('garbage', k), null);
+  });
+  await test('[속도] 새 데이터베이스 연결(store): 주소·헤더·오류 처리', async () => {
+    const realFetch = global.fetch;
+    process.env.SUPABASE_URL = 'https://db.test/';
+    process.env.SUPABASE_SECRET_KEY = 'sb_secret_x';
+    delete require.cache[require.resolve('../lib/store')];
+    const S = require('../lib/store');
+    const log = [];
+    let reply = { status: 200, body: '[]' };
+    global.fetch = async (url, init) => { log.push({ url, init }); return { ok: reply.status < 400, status: reply.status, text: async () => reply.body }; };
+    try {
+      reply = { status: 200, body: JSON.stringify([{ nickname: 'Ab', pw_hash: 'h' }]) };
+      assert.deepEqual(await S.getGuest('AB가'), { nickname: 'Ab', pw_hash: 'h' });
+      assert.equal(log[0].url, 'https://db.test/rest/v1/guests?select=nickname%2Cpw_hash&nick_key=eq.ab%EA%B0%80');
+      assert.equal(log[0].init.headers.apikey, 'sb_secret_x');
+      assert.equal(log[0].init.headers.Authorization, 'Bearer sb_secret_x');
+      reply = { status: 200, body: '[]' };
+      assert.equal(await S.getGuest('없음'), null);
+      log.length = 0; await S.ping();
+      assert.equal(log[0].url, 'https://db.test/rest/v1/sakes?select=id&limit=1');
+      reply = { status: 200, body: JSON.stringify([{ id: 1, stars: '4.5' }]) };
+      assert.equal((await S.allRatings())[0].stars, 4.5);
+      reply = { status: 409, body: JSON.stringify({ code: '23505', message: 'duplicate key' }) };
+      await assert.rejects(S.createGuest('가', 'h'), (e) => e.code === 'DUP');
+      await assert.rejects(S.renameGuest('가', '나'), (e) => e.code === 'DUP');
+      reply = { status: 400, body: JSON.stringify({ code: '22P02', message: 'bad' }) };
+      await assert.rejects(S.listSakes(), (e) => e.code === '22P02' && e.message === 'bad');
+      reply = { status: 201, body: '' };
+      log.length = 0;
+      await S.upsertRating({ sake_id: 3, nickname: '가', v: [1, 2, 3, 4, 5], comment: '', drank_on: null, stars: 4 });
+      assert.equal(log[0].url, 'https://db.test/rest/v1/ratings?on_conflict=sake_id%2Cnickname');
+      assert.equal(log[0].init.headers.Prefer, 'resolution=merge-duplicates');
+      assert.equal(JSON.parse(log[0].init.body).stars, 4);
+      reply = { status: 200, body: '{}' };
+      const url = await S.uploadImage(Buffer.from('x'), 'image/png');
+      assert.match(url, /^https:\/\/db\.test\/storage\/v1\/object\/public\/sake-images\/\d+-[0-9a-f]{10}\.png$/);
+      assert.equal(log[log.length - 1].init.headers['Cache-Control'], 'max-age=31536000');
+      global.fetch = async () => { throw new Error('offline'); };
+      await assert.rejects(S.listSakes(), /연결하지 못했어요/);
+    } finally {
+      global.fetch = realFetch;
+      delete process.env.SUPABASE_URL; delete process.env.SUPABASE_SECRET_KEY;
+      delete require.cache[require.resolve('../lib/store')];
+    }
+  });
+  await test('[속도] 배포 패키지에 무거운 라이브러리(supabase-js, jsonwebtoken)가 없음', async () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    assert.ok(!pkg.dependencies['@supabase/supabase-js']);
+    assert.ok(!pkg.dependencies.jsonwebtoken);
+    ['lib', 'routes', 'api'].forEach((d) => fs.readdirSync(path.join(ROOT, d)).forEach((f) => {
+      const t = fs.readFileSync(path.join(ROOT, d, f), 'utf8');
+      assert.doesNotMatch(t, /require\('(@supabase\/supabase-js|jsonwebtoken)'\)/, d + '/' + f);
+    }));
+  });
 
   /* ================= 배포 파일 점검 ================= */
   await test('[배포] 예시 데이터·임시 계정·운영자 비밀번호가 코드에 없음', async () => {
-    const files = ['public/app.js', 'public/index.html', 'public/style.css', 'api/auth.js', 'lib/auth.js', 'supabase/schema.sql'];
+    const files = ['public/app.js', 'public/index.html', 'public/style.css', 'routes/auth.js', 'lib/auth.js', 'lib/store.js', 'api/[route].js', 'supabase/schema.sql'];
     files.forEach((f) => {
       const t = fs.readFileSync(path.join(ROOT, f), 'utf8');
       assert.doesNotMatch(t, /880825/, f + ' 에 비밀번호');

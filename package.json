@@ -10,9 +10,7 @@
     "node": "22.x"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.117.2",
-    "bcryptjs": "^3.0.3",
-    "jsonwebtoken": "^9.0.3"
+    "bcryptjs": "^3.0.3"
   },
   "devDependencies": {
     "jsdom": "^29.1.1"

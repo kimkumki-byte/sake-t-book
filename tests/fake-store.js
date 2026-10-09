@@ -5,6 +5,7 @@ function createFakeStore() {
   const copy = (o) => JSON.parse(JSON.stringify(o));
   return {
     _db: db,
+    async ping() { db.pings = (db.pings || 0) + 1; },
     async getGuest(nick) {
       const g = db.guests.find((x) => x.nickname.toLowerCase() === String(nick).toLowerCase());
       return g ? copy(g) : null;

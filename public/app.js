@@ -25,6 +25,7 @@
     showOpLogin: false,
     sakes: null,         // 목록
     detail: null,        // 상세 (서버 응답 그대로)
+    dcache: {},          // 한 번 본 상세는 기억해 두고 바로 보여줘요 (뒤에서 새로 고침)
     draft: null,         // 작성 중인 평가 { id, v, t }
     form: clone(EMPTY_FORM), // 운영자 등록/수정 폼
     formErr: '',
@@ -799,32 +800,75 @@
     if (key !== lastView) { window.scrollTo(0, 0); lastView = key; }
   }
 
+  /* ---------- 이 기기에 마지막 화면 기억하기 (다음에 열 때 바로 보여주고 뒤에서 새로 고침) ---------- */
+  var CACHE_KEY = 'sk-cache-v1';
+  function readCache() {
+    try { var c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); return c && typeof c === 'object' ? c : null; } catch (e) { return null; }
+  }
+  function saveCache(k, v) {
+    if (!S.me) return;
+    try {
+      var c = readCache();
+      if (!c || c.nick !== S.me.nickname || c.role !== S.me.role) c = { nick: S.me.nickname, role: S.me.role };
+      c.adminNick = S.adminNick; c[k] = v;
+      localStorage.setItem(CACHE_KEY, JSON.stringify(c));
+    } catch (e) { /* 저장 공간이 없으면 기억만 안 해요 */ }
+  }
+  function clearCache() { try { localStorage.removeItem(CACHE_KEY); } catch (e) { /* 무시 */ } }
+
   /* ---------- 데이터 불러오기 ---------- */
   function loadSakes() {
-    return api('/api/sakes').then(function (d) { S.sakes = d.sakes; render(); }).catch(handleErr);
+    return api('/api/sakes').then(function (d) {
+      S.sakes = d.sakes; saveCache('sakes', d.sakes);
+      if (['tasting', 'admin', 'detail'].indexOf(route().name) >= 0) render();
+    }).catch(handleErr);
   }
   function loadHome() {
-    return api('/api/home').then(function (d) { S.home = d; if (route().name === 'home') render(); }).catch(handleErr);
+    return api('/api/home').then(function (d) { S.home = d; saveCache('home', d); if (route().name === 'home') render(); }).catch(handleErr);
   }
   function loadMy() {
-    return api('/api/my').then(function (d) { S.my = d; if (route().name === 'my') render(); }).catch(handleErr);
+    return api('/api/my').then(function (d) { S.my = d; saveCache('my', d); if (route().name === 'my') render(); }).catch(handleErr);
   }
   function loadRanking() {
     var p = S.rank.period, o = S.rank.period === 'all' ? 0 : S.rank.offset;
     return api('/api/ranking?period=' + p + '&offset=' + o).then(function (d) {
+      if (p === 'all') saveCache('rank', d);
       if (S.rank.period === p && (p === 'all' || S.rank.offset === o)) { S.rank.data = d; if (route().name === 'ranking') render(); }
     }).catch(handleErr);
   }
   function loadDetail(id) {
     S.loadErr = '';
     return api('/api/sake?id=' + id).then(function (d) {
-      S.detail = d;
-      render();
+      S.dcache[id] = d;
+      var r = route();
+      if ((r.name === 'detail' || r.name === 'rate') && r.id === id) { S.detail = d; render(); }
+      // 이전 술/다음 술도 미리 받아 둬요 (넘길 때 바로 보이게)
+      var nb = neighbors(id);
+      if (nb) { prefetchDetail(nb.prev && nb.prev.id); prefetchDetail(nb.next && nb.next.id); }
     }).catch(function (e) {
       if (e.status === 401) return handleErr(e);
       S.loadErr = e.message;
       render();
     });
+  }
+  function prefetchDetail(id) {
+    if (!id || S.dcache[id]) return;
+    api('/api/sake?id=' + id).then(function (d) { if (S.me) S.dcache[id] = d; }).catch(function () {});
+  }
+
+  // 지금 화면을 먼저 받고, 잠시 뒤 다른 탭 데이터도 미리 받아 둬요 (탭을 누르면 바로 보이게)
+  var prefetched = false;
+  function prefetchAll() {
+    if (prefetched) return;
+    prefetched = true;
+    setTimeout(function () {
+      if (!S.me) { prefetched = false; return; }
+      var cur = route().name, quiet = function () {};
+      if (cur !== 'home') api('/api/home').then(function (d) { if (!S.me) return; S.home = d; saveCache('home', d); if (route().name === 'home') render(); }).catch(quiet);
+      if (cur !== 'tasting' && cur !== 'admin' && cur !== 'detail') api('/api/sakes').then(function (d) { if (!S.me) return; S.sakes = d.sakes; saveCache('sakes', d.sakes); if (['tasting', 'admin'].indexOf(route().name) >= 0) render(); }).catch(quiet);
+      if (cur !== 'ranking') api('/api/ranking?period=all&offset=0').then(function (d) { if (!S.me) return; saveCache('rank', d); if (S.rank.period === 'all') { S.rank.data = d; if (route().name === 'ranking') render(); } }).catch(quiet);
+      if (cur !== 'my') api('/api/my').then(function (d) { if (!S.me) return; S.my = d; saveCache('my', d); if (route().name === 'my') render(); }).catch(quiet);
+    }, 700);
   }
   function handleErr(e) {
     if (e && e.status === 401) {
@@ -837,7 +881,8 @@
   }
 
   function resetAll() {
-    S.me = null; S.sakes = null; S.detail = null; S.draft = null; S.home = null; S.my = null; S.rank.data = null;
+    S.me = null; S.sakes = null; S.detail = null; S.dcache = {}; S.draft = null; S.home = null; S.my = null; S.rank.data = null;
+    clearCache();
     S.form = clone(EMPTY_FORM); S.authErr = ''; S.showOpLogin = false; S.authTab = 'login';
     S.acct = ''; S.acctErr = ''; S.byeConfirm = false; S.byePw = '';
   }
@@ -851,7 +896,7 @@
     else if (r.name === 'ranking') { render(); loadRanking(); }
     else if (r.name === 'my') { S.acct = ''; S.acctErr = ''; S.byeConfirm = false; S.byePw = ''; render(); loadMy(); }
     else {
-      if (!S.detail || S.detail.sake.id !== r.id) S.detail = null;
+      if (!S.detail || S.detail.sake.id !== r.id) S.detail = S.dcache[r.id] || null;
       if (r.name === 'detail') S.draft = null;
       render();
       loadDetail(r.id);
@@ -886,12 +931,16 @@
 
   /* ---------- 동작 ---------- */
   function afterLogin(d) {
+    var c = readCache(), sameUser = !!(c && c.nick === d.nickname && c.role === d.role);
     S.me = { role: d.role, nickname: d.nickname };
     S.authErr = ''; S.showOpLogin = false; S.busy = false; S.authTab = 'login';
-    S.sakes = null; S.detail = null; S.draft = null; S.form = clone(EMPTY_FORM); S.home = null; S.my = null; S.rank.data = null;
+    S.sakes = null; S.detail = null; S.dcache = {}; S.draft = null; S.form = clone(EMPTY_FORM); S.home = null; S.my = null; S.rank.data = null;
+    if (!sameUser) clearCache();
+    prefetched = false;
     // 운영자·게스트 모두 첫 화면은 홈
     if (location.hash !== '#/' && location.hash !== '') location.hash = '#/';
     else onRoute();
+    prefetchAll();
     toast(d.nickname + '님, 반가워요');
   }
 
@@ -924,7 +973,7 @@
     S.busy = true; render();
     api('/api/rate', { method: 'POST', body: { sakeId: id, v: dr.v, comment: dr.t.trim(), drankOn: dr.d, stars: dr.s } })
       .then(function (res) {
-        S.busy = false; S.draft = null; S.detail = null; S.sakes = null; S.home = null; S.my = null; S.rank.data = null;
+        S.busy = false; S.draft = null; S.detail = null; S.dcache = {}; S.sakes = null; S.home = null; S.my = null; S.rank.data = null;
         var parts = [];
         if (res && res.levelUp) parts.push('레벨 업! Lv.' + res.levelUp.lv + ' ' + res.levelUp.title);
         if (res && res.newBadges && res.newBadges.length) parts.push('새 뱃지: ' + res.newBadges.map(function (b) { return b.name; }).join(', '));
@@ -952,7 +1001,7 @@
     api('/api/auth', { method: 'POST', body: { action: 'rename', nickname: v } }).then(function (d) {
       S.busy = false;
       S.me.nickname = d.nickname; S.acct = ''; S.acctErr = '';
-      S.home = null; S.sakes = null; S.detail = null; S.my = null;
+      S.home = null; S.sakes = null; S.detail = null; S.dcache = {}; S.my = null; S.rank.data = null;
       toast('닉네임을 \'' + d.nickname + '\'' + josa(d.nickname, '으로', '로') + ' 바꿨어요');
       render(); loadMy();
     }).catch(function (e) { S.busy = false; acctFail(e); var n = $('newnick'); if (n) n.value = v; });
@@ -1021,7 +1070,7 @@
     S.busy = true; S.formErr = ''; render();
     api(editing ? '/api/sakes?id=' + f.id : '/api/sakes', { method: editing ? 'PATCH' : 'POST', body: body })
       .then(function () {
-        S.busy = false; S.form = clone(EMPTY_FORM); S.detail = null;
+        S.busy = false; S.form = clone(EMPTY_FORM); S.detail = null; S.dcache = {};
         toast(editing ? '수정했어요' : '등록했어요. 목록에 바로 보여요');
         render(); window.scrollTo(0, 0);
         loadSakes();
@@ -1038,6 +1087,7 @@
       S.delId = null;
       if (S.form.id === id) S.form = clone(EMPTY_FORM);
       if (S.detail && S.detail.sake.id === id) S.detail = null;
+      S.dcache = {};
       toast('삭제했어요');
       loadSakes();
     }).catch(handleErr);
@@ -1207,13 +1257,30 @@
   };
 
   /* ---------- 시작 ---------- */
+  // 이 기기에 기억해 둔 화면이 있으면 바로 보여주고, 서버 확인과 새 데이터 받기는 동시에 해요
+  var C = readCache();
+  if (C && C.nick && (C.role === 'guest' || C.role === 'admin')) {
+    S.me = { role: C.role, nickname: C.nick };
+    S.adminNick = C.adminNick || '';
+    S.home = C.home || null; S.sakes = C.sakes || null; S.my = C.my || null;
+    if (C.rank && S.rank.period === 'all') S.rank.data = C.rank;
+    onRoute();
+  }
   api('/api/me').then(function (d) {
     S.adminNick = d.adminNick || '';
-    if (d.role) {
-      S.me = { role: d.role, nickname: d.nickname };
+    if (!d.role) {
+      // 로그인이 끝났으면 기억해 둔 화면도 지워요
+      if (S.me) { resetAll(); S.authErr = '로그인이 끝났어요. 다시 로그인해 주세요.'; }
+      return render();
     }
-    onRoute();
+    if (!S.me || S.me.nickname !== d.nickname || S.me.role !== d.role) {
+      if (S.me) { S.sakes = null; S.home = null; S.my = null; S.rank.data = null; S.detail = null; S.dcache = {}; clearCache(); }
+      S.me = { role: d.role, nickname: d.nickname };
+      onRoute();
+    }
+    prefetchAll();
   }).catch(function (e) {
+    if (S.me) return toast(e.message); // 기억해 둔 화면은 그대로 두고 알려만 줘요
     $('app').innerHTML = '<div class="panel center stack" style="margin-top:40px"><p class="err">' + esc(e.message) + '</p><button class="btn ghost" onclick="location.reload()">다시 시도</button></div>';
   });
 })();
