@@ -12,6 +12,7 @@ const routes = {
   my: require('../routes/my'),
   wish: require('../routes/wish'),
   ping: require('../routes/ping'),
+  osul: require('../routes/osul'),
 };
 
 module.exports = async (req, res) => {

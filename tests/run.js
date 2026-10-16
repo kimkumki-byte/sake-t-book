@@ -5,6 +5,7 @@ const fs = require('fs');
 const assert = require('assert');
 const { createFakeStore } = require('./fake-store');
 
+process.env.TZ = 'Asia/Seoul'; // 화면(브라우저)과 서버의 '오늘'을 한국 시간으로 맞춰요
 process.env.SESSION_SECRET = 'test-secret-test-secret-1234';
 process.env.ADMIN_PASSWORD = '880825';
 delete process.env.ADMIN_ID;
@@ -20,7 +21,7 @@ function freshServer() {
   const D = require('../api/[route]');
   const via = (name) => (req, res) => { req.query = { ...(req.query || {}), route: name }; return D(req, res); };
   const X = {};
-  ['me', 'auth', 'sakes', 'sake', 'rate', 'home', 'ranking', 'my', 'wish'].forEach((k) => { X[k] = via(k); });
+  ['me', 'auth', 'sakes', 'sake', 'rate', 'home', 'ranking', 'my', 'wish', 'osul'].forEach((k) => { X[k] = via(k); });
   X.dispatch = D;
   return X;
 }
@@ -339,7 +340,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
 
   A = freshServer();
   const routes = {};
-  const setRoutes = (X) => { ['me', 'auth', 'sakes', 'sake', 'rate', 'home', 'ranking', 'my', 'wish'].forEach((k) => { routes['/api/' + k] = X[k]; }); };
+  const setRoutes = (X) => { ['me', 'auth', 'sakes', 'sake', 'rate', 'home', 'ranking', 'my', 'wish', 'osul'].forEach((k) => { routes['/api/' + k] = X[k]; }); };
   setRoutes(A);
 
   // opts: { storage: 미리 넣어 둘 localStorage, jar: 로그인 쿠키, gate: 이 Promise가 풀릴 때까지 서버 응답을 붙잡아 둠 }
@@ -396,7 +397,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     assert.ok(op.w.location.hash === '#/' || op.w.location.hash === '', '운영자 첫 화면은 홈');
     assert.ok(op.$('.lvcard')); assert.ok(op.$('.tabbar'));
     assert.match(op.text(), /아무개/); assert.ok(op.$('.lvcard .opv'));
-    await op.tab('테이스팅');
+    await op.tab('사케');
     assert.match(op.text(), /관리 화면에서 첫 사케를 등록해 주세요/);
     await op.toAdmin();
     assert.equal(op.w.location.hash, '#/admin');
@@ -452,7 +453,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   });
   const kubota = store._db.sakes[0].id;
   await test('[화면] 관리 화면 → 테이스팅 → 상세에도 "사케 정보 수정" 버튼', async () => {
-    await op.tab('테이스팅');
+    await op.tab('사케');
     assert.equal(op.w.location.hash, '#/tasting');
     assert.match(op.text(), /평가 0\/1/);
     await op.click(op.$('.card'));
@@ -468,7 +469,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     assert.equal(op.w.location.hash, '#/admin');
     assert.equal(op.$('#oname').value, '쿠보타 만주 준마이다이긴조');
     await op.click(op.btn('수정 취소'));
-    await op.tab('테이스팅');
+    await op.tab('사케');
     await op.click(op.$('.card'));
   });
   await test('[화면] 운영자 평가: 슬라이더·한줄평 → 저장 → 비교 차트와 리뷰(운영자 뱃지)', async () => {
@@ -498,7 +499,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     assert.ok(!gu.btn('관리'), '게스트에게 관리 버튼이 보이면 안 됨');
   });
   await test('[화면] 게스트는 평가 전 잠금, 수정 버튼 없음', async () => {
-    await gu.tab('테이스팅');
+    await gu.tab('사케');
     await gu.click(gu.$('.card'));
     assert.match(gu.text(), /평균과 리뷰는 평가 후에 열려요/); assert.match(gu.text(), /지금 1명이 평가했어요/);
     assert.ok(!gu.btn('사케 정보 수정'));
@@ -590,7 +591,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     await b.settle();
     b.type('#nick', '바다'); b.type('#pw', 'sea1');
     await b.submit('#authform');
-    await b.tab('테이스팅');
+    await b.tab('사케');
     const names = () => b.$$('#results .card h3').map((x) => x.textContent);
 
     await test('[분류] 탭에 개수 표시: 전체 4 · 마신 사케 3 · 평가할 사케 1', async () => {
@@ -686,24 +687,24 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.ok(b.$('.lvcard'));
     });
     await test('[로고] "사케치북" 글자를 눌러도 홈으로, 테이스팅의 검색어는 그대로', async () => {
-      await b.tab('테이스팅');
+      await b.tab('사케');
       const q = b.$('#q'); q.value = '쿠보'; q.dispatchEvent(new b.w.Event('input', { bubbles: true })); await b.settle();
       await b.click(b.$('.top .brand h1'));
       assert.ok(b.$('.lvcard'));
-      await b.tab('테이스팅');
+      await b.tab('사케');
       assert.equal(b.$('#q').value, '쿠보');
       await b.click(b.$('.searchbox .clear'));
     });
     await test('[하단 메뉴] 평가 입력 화면에서는 숨김, 로고 누르면 홈으로', async () => {
       await b.click(b.$$('#results .card').find((c) => /주욘다이/.test(c.textContent)));
       assert.ok(b.$('.tabbar'), '상세 화면에는 하단 메뉴');
-      assert.equal(b.$('.tabbar .tb.on').textContent.trim(), '테이스팅');
+      assert.equal(b.$('.tabbar .tb.on').textContent.trim(), '사케');
       await b.click(b.btn('내 평가 남기기'));
       assert.match(b.w.location.hash, /\/rate$/);
       assert.ok(!b.$('.tabbar'), '평가 입력 화면에는 하단 메뉴가 없어야 함');
       await b.click(b.$('.top .brand'));
       assert.ok(b.w.location.hash === '#/' || b.w.location.hash === '');
-      await b.tab('테이스팅');
+      await b.tab('사케');
     });
     await test('[캘린더] "마신 날짜별" → 이번 달 달력과 요일 표시', async () => {
       await b.click(b.btn('마신 날짜별'));
@@ -824,7 +825,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       await b.click(b.btn('취소'));
     });
     await test('[별점] 목록 카드에 내 별점, "내 별점순" 정렬', async () => {
-      await b.tab('테이스팅'); await b.click(b.$$('.filters button')[0]);
+      await b.tab('사케'); await b.click(b.$$('.filters button')[0]);
       const card = b.$$('#results .card').find((c) => /야마가타/.test(c.textContent));
       assert.match(card.querySelector('.mystar').textContent, /★ 2/);
       const sel = b.$('#sort'); sel.value = 'stars'; sel.dispatchEvent(new b.w.Event('change', { bubbles: true })); await b.settle();
@@ -843,13 +844,13 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       const mine = b.$('.review.mine .stars.sm');
       assert.equal(mine.querySelectorAll('.st.on').length, 3); assert.equal(mine.querySelectorAll('.st.half').length, 1);
       assert.match(b.$('.satis').textContent, /4\.3|4\.25/, '평균 (3.5+5)/2 = 4.25');
-      await b.tab('테이스팅');
+      await b.tab('사케');
       assert.match(b.$$('#results .card').find((c) => /야마가타/.test(c.textContent)).querySelector('.mystar').textContent, /★ 3\.5/);
       await b.click(b.$$('#results .card').find((c) => /야마가타/.test(c.textContent)));
       await b.click(b.btn('내 평가 수정'));
       assert.equal(b.$$('.starpick .st.half').length, 1, '다시 열어도 반 별 유지');
       await b.click(b.btn('취소'));
-      await b.tab('테이스팅');
+      await b.tab('사케');
     });
     await test('[이전/다음] 목록 순서대로 이동, 처음·마지막 표시, 위쪽 작은 버튼도 동작', async () => {
       const sel = b.$('#sort'); sel.value = 'name'; sel.dispatchEvent(new b.w.Event('change', { bubbles: true })); await b.settle();
@@ -870,12 +871,12 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.match(b.$('.pager .pg.next').textContent, /마지막이에요/);
     });
     await test('[이전/다음] 검색 결과 안에서만 이동 ("아사히" 양조장 검색 → 2병)', async () => {
-      await b.tab('테이스팅');
+      await b.tab('사케');
       await b.click(b.$$('.toolbar .seg button').find((x) => x.textContent === '양조장'));
       const q = b.$('#q'); q.value = '아사히'; q.dispatchEvent(new b.w.Event('input', { bubbles: true })); await b.settle();
       await b.click(b.$$('#results .card')[0]);
       assert.match(b.$('.pmini').textContent, /1 \/ 2/);
-      await b.tab('테이스팅');
+      await b.tab('사케');
     });
     await test('[이전/다음] 주소로 바로 들어와도 이전/다음이 보임', async () => {
       const b2 = browser(); await b2.settle();
@@ -1132,8 +1133,8 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     await u.click(u.btn('처음이에요')); u.type('#nick', '바람'); u.type('#pw', 'wind1'); await u.submit('#authform');
     await u.settle();
 
-    await test('[하단 메뉴] 홈·랭킹·테이스팅·MY, 지금 메뉴 표시', async () => {
-      assert.deepEqual(u.$$('.tabbar .tb').map((x) => x.textContent.trim()), ['홈', '랭킹', '테이스팅', 'MY']);
+    await test('[하단 메뉴] 홈·랭킹·오술·사케·MY, 지금 메뉴 표시', async () => {
+      assert.deepEqual(u.$$('.tabbar .tb').map((x) => x.textContent.trim()), ['홈', '랭킹', '오술', '사케', 'MY']);
       assert.equal(u.$('.tabbar .tb.on').textContent.trim(), '홈');
       assert.equal(u.$('.tabbar .tb.on').getAttribute('aria-current'), 'page');
       assert.ok(u.w.document.body.classList.contains('has-tabbar'));
@@ -1161,7 +1162,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       await u.click(u.$('.todo'));
       assert.equal(u.w.location.hash, '#/tasting');
       assert.match(u.$('.filters [aria-selected="true"]').textContent, /평가할 사케/);
-      assert.equal(u.$('.tabbar .tb.on').textContent.trim(), '테이스팅');
+      assert.equal(u.$('.tabbar .tb.on').textContent.trim(), '사케');
     });
     await test('[랭킹] 기본은 전체(기간 이동 없음), 주간은 기간 이름·다음 기간 막힘·지난주는 "평가된 사케가 없어요"', async () => {
       await u.tab('랭킹');
@@ -1186,7 +1187,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       await u.click(u.$('[data-a="period"][data-p="all"]')); await u.settle();
     });
     await test('[찜] 상세 ♡ 누르면 ♥, 테이스팅 "찜" 탭과 MY에 모이고, 다시 누르면 해제', async () => {
-      await u.tab('테이스팅');
+      await u.tab('사케');
       await u.click(u.$$('.filters button')[0]);
       await u.click(u.$$('#results .card').find((c) => /이소지만/.test(c.textContent)));
       const w = u.$('.wish');
@@ -1207,7 +1208,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.match(u.text(), /마셔보고 싶어요 0/);
     });
     await test('[평가 → 뱃지] 첫 평가 저장하면 "새 뱃지: 첫 잔" 알림', async () => {
-      await u.tab('테이스팅');
+      await u.tab('사케');
       await u.click(u.$$('.filters button')[0]);
       await u.click(u.$$('#results .card').find((c) => /닷사이/.test(c.textContent)));
       await u.click(u.btn('내 평가 남기기'));
@@ -1307,6 +1308,90 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     });
     await test('[화면] 새 화면들에서 스크립트 오류 없음', async () => { assert.deepEqual(u.errors, []); });
 
+    /* ---------- 오술 화면 ---------- */
+    const osOp = browser(); await osOp.settle();
+    const osGu = browser(); await osGu.settle();
+    let osIds = [];
+    await test('[오술 화면] 운영자: MY → 오술 관리 → 사케 추가·순서 바꾸기·저장', async () => {
+      await osOp.click(osOp.btn('운영자 로그인'));
+      osOp.type('#oid', 'ADMIN'); osOp.type('#opw', '880825'); await osOp.submit('#opform');
+      await osOp.tab('MY'); await osOp.settle();
+      assert.ok(osOp.$('[data-h="#/osul/manage"]'), 'MY에 오술 관리');
+      await osOp.click(osOp.$('[data-h="#/osul/manage"]')); await osOp.settle(); await osOp.settle();
+      assert.equal(osOp.w.location.hash, '#/osul/manage');
+      assert.equal(osOp.$('.tabbar .tb.on').textContent.trim(), 'MY');
+      assert.match(osOp.text(), /이날의 오술 0병/);
+      assert.ok(osOp.btn('이 순서로 저장').disabled, '바꾼 게 없으면 저장 버튼 꺼짐');
+      const adds = osOp.$$('[data-a="oe-add"]');
+      assert.ok(adds.length >= 3);
+      const first = +adds[0].getAttribute('data-id'), second = +adds[1].getAttribute('data-id');
+      await osOp.click(adds[0]);
+      await osOp.click(osOp.$$('[data-a="oe-add"]')[0]);
+      assert.match(osOp.text(), /이날의 오술 2병/); assert.match(osOp.text(), /저장 안 됨/);
+      assert.ok(!osOp.$$('[data-a="oe-add"]').some((b) => +b.getAttribute('data-id') === first), '넣은 사케는 추가 목록에서 빠짐');
+      // 검색으로 좁히기
+      const name3 = store._db.sakes.find((x) => x.id !== first && x.id !== second).name;
+      osOp.type('#oeq', name3);
+      assert.equal(osOp.$$('#oepick [data-a="oe-add"]').length, 1);
+      osOp.type('#oeq', '');
+      // 두 번째를 위로
+      await osOp.click(osOp.$$('[data-a="oe-up"]')[1]);
+      await osOp.click(osOp.btn('이 순서로 저장')); await osOp.settle();
+      assert.match(osOp.$('#toast').textContent, /오술 2병을 저장했어요/);
+      assert.match(osOp.text(), /저장됨/);
+      osIds = [second, first];
+      const today = require('../lib/validate').todayKST();
+      assert.deepEqual(store._db.osul.filter((o) => o.day === today).sort((a, b) => a.pos - b.pos).map((o) => o.sake_id), osIds);
+      assert.ok(osOp.$('.chipbtn.on'), '정해 둔 오술 날짜 목록');
+      assert.deepEqual(osOp.errors, []);
+    });
+    await test('[오술 화면] 손님: 하단 메뉴 오술 → 그날 사케만 정한 순서로, 오술 관리 메뉴는 없음', async () => {
+      await osGu.click(osGu.btn('처음이에요')); osGu.type('#nick', '오술러'); osGu.type('#pw', 'osul2'); await osGu.submit('#authform');
+      await osGu.tab('오술'); await osGu.settle();
+      assert.equal(osGu.w.location.hash, '#/osul');
+      assert.equal(osGu.$('.tabbar .tb.on').textContent.trim(), '오술');
+      assert.match(osGu.text(), /오늘의 오술/);
+      const names = osGu.$$('.osrow .t b').map((x) => x.textContent);
+      assert.deepEqual(names, osIds.map((id) => store._db.sakes.find((x) => x.id === id).name));
+      assert.match(osGu.text(), /2병 중 0병 기록했어요/);
+      assert.equal(osGu.$('[data-h="#/osul/manage"]'), null);
+      await osGu.tab('MY'); await osGu.settle();
+      assert.equal(osGu.$('[data-h="#/osul/manage"]'), null);
+      osGu.w.location.hash = '#/osul/manage'; await osGu.settle();
+      assert.equal(osGu.$('#oeq'), null, '손님은 편성 화면을 못 봄');
+    });
+    await test('[오술 화면] 기록하기 → 평가 저장 → 상세는 "← 오술", 이전/다음 술은 오술 순서, 오술에 기록 표시', async () => {
+      await osGu.tab('오술'); await osGu.settle();
+      await osGu.click(osGu.$$('.osrow')[0].querySelector('[data-a="nav"].btn'));
+      await osGu.settle(); await osGu.settle();
+      assert.equal(osGu.w.location.hash, '#/sake/' + osIds[0] + '/rate');
+      await osGu.click(osGu.$('[data-a="star"][data-n="4"]')); await osGu.click(osGu.btn('저장하고 결과 보기')); await osGu.settle(); await osGu.settle();
+      assert.equal(osGu.w.location.hash, '#/sake/' + osIds[0]);
+      assert.ok(osGu.btn('← 오술'), '오술에서 들어오면 뒤로가기가 오술');
+      assert.equal(osGu.$('.tabbar .tb.on').textContent.trim(), '오술');
+      assert.match(osGu.$('.pmini').textContent, /1 \/ 2/);
+      await osGu.click(osGu.$('.pmini [aria-label="다음 술"]')); await osGu.settle(); await osGu.settle();
+      assert.equal(osGu.w.location.hash, '#/sake/' + osIds[1]);
+      await osGu.click(osGu.btn('← 오술')); await osGu.settle();
+      assert.match(osGu.text(), /2병 중 1병 기록했어요/);
+      assert.ok(osGu.$$('.osrow')[0].classList.contains('done'));
+      // 사케 탭에서 들어가면 다시 "← 목록"
+      await osGu.tab('사케'); await osGu.settle();
+      await osGu.click(osGu.$('.card')); await osGu.settle();
+      assert.ok(osGu.btn('← 목록'));
+      assert.equal(osGu.$('.tabbar .tb.on').textContent.trim(), '사케');
+      assert.deepEqual(osGu.errors, []);
+    });
+    await test('[오술 화면] 정해진 오술이 없는 날: 안내 문구', async () => {
+      await osOp.tab('MY'); await osOp.settle();
+      await osOp.click(osOp.$('[data-h="#/osul/manage"]')); await osOp.settle(); await osOp.settle();
+      while (osOp.$$('[data-a="oe-del"]').length) await osOp.click(osOp.$$('[data-a="oe-del"]')[0]);
+      await osOp.click(osOp.btn('이날 오술 비우기')); await osOp.settle();
+      assert.match(osOp.$('#toast').textContent, /오술을 비웠어요/);
+      await osGu.tab('홈'); await osGu.tab('오술'); await osGu.settle();
+      assert.match(osGu.text(), /오늘 마실 술이 아직 없어요/);
+    });
+
     /* ---------- 속도: 미리 받기 · 기억해 둔 화면 ---------- */
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const fast = browser(); await fast.settle();
@@ -1320,7 +1405,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       fast.$$('.tabbar .tb').find((x) => x.textContent.trim() === 'MY').click();
       assert.doesNotMatch(fast.text(), /불러오는 중/);
       assert.match(fast.text(), /빠른손님/);
-      fast.$$('.tabbar .tb').find((x) => x.textContent.trim() === '테이스팅').click();
+      fast.$$('.tabbar .tb').find((x) => x.textContent.trim() === '사케').click();
       assert.doesNotMatch(fast.text(), /불러오는 중/);
       await fast.settle(); await fast.settle();
       assert.deepEqual(fast.errors, []);
@@ -1376,6 +1461,102 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.deepEqual(b.errors, []);
     });
   }
+
+
+  /* ================= 오술 (서버) ================= */
+  await test('[오술 API] 운영자가 날짜·순서를 정하면 그날 그 사케만 그 순서로, 손님 기록 상태도 함께', async () => {
+    const X = freshServer();
+    const v = require('../lib/validate');
+    const adm = cookieFrom(await call(X.auth, { method: 'POST', body: { action: 'admin', id: 'ADMIN', password: '880825' } }));
+    const g = cookieFrom(await call(X.auth, { method: 'POST', body: { action: 'signup', nickname: '오술손님', password: 'osul1' } }));
+    const mk = async (name) => (await call(X.sakes, { method: 'POST', cookie: adm, body: { name, tint: '#4f7cac' } })).body.sake.id;
+    const a = await mk('가 사케'), b = await mk('나 사케'), c = await mk('다 사케');
+    const today = v.todayKST();
+    const tomorrow = new Date(Date.parse(today + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10);
+    const yesterday = new Date(Date.parse(today + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
+    // 비어 있을 때
+    let r = await call(X.osul, { cookie: g });
+    assert.equal(r.status, 200); assert.equal(r.body.date, today); assert.deepEqual(r.body.items, []);
+    // 손님은 못 정함, 헤더 없는 요청도 거절
+    assert.equal((await call(X.osul, { method: 'PUT', cookie: g, body: { date: today, ids: [a] } })).status, 403);
+    assert.equal((await call(X.osul, { method: 'PUT', cookie: adm, xrw: false, body: { date: today, ids: [a] } })).status, 403);
+    // 오늘: 다 → 가 순서
+    r = await call(X.osul, { method: 'PUT', cookie: adm, body: { date: today, ids: [c, a] } });
+    assert.equal(r.status, 200); assert.deepEqual(r.body.ids, [c, a]);
+    await call(X.rate, { method: 'POST', cookie: g, body: { sakeId: a, v: [3, 3, 3, 3, 3], comment: '', stars: 4.5 } });
+    r = await call(X.osul, { cookie: g });
+    assert.deepEqual(r.body.items.map((x) => x.name), ['다 사케', '가 사케']);
+    assert.deepEqual(r.body.items.map((x) => x.rated), [false, true]);
+    assert.equal(r.body.items[1].stars, 4.5);
+    assert.ok(!r.body.items.some((x) => x.id === b), '정하지 않은 사케는 안 보임');
+    // 순서 바꿔 다시 저장 → 통째로 바뀜
+    await call(X.osul, { method: 'PUT', cookie: adm, body: { date: today, ids: [a, b] } });
+    r = await call(X.osul, { cookie: g });
+    assert.deepEqual(r.body.items.map((x) => x.id), [a, b]);
+    // 어제·내일
+    await call(X.osul, { method: 'PUT', cookie: adm, body: { date: yesterday, ids: [c] } });
+    await call(X.osul, { method: 'PUT', cookie: adm, body: { date: tomorrow, ids: [b, c] } });
+    r = await call(X.osul, { cookie: g });
+    assert.equal(r.body.prev, yesterday); assert.equal(r.body.next, tomorrow, '손님도 미리 정한 내일 오술로 넘어갈 수 있음');
+    r = await call(X.osul, { cookie: g, query: { date: tomorrow } });
+    assert.deepEqual(r.body.items.map((x) => x.id), [b, c], '손님도 내일 오술을 미리 봄'); assert.equal(r.body.next, null); assert.equal(r.body.prev, today);
+    r = await call(X.osul, { cookie: g, query: { date: yesterday } });
+    assert.deepEqual(r.body.items.map((x) => x.id), [c]); assert.equal(r.body.next, today);
+    r = await call(X.osul, { cookie: adm });
+    assert.equal(r.body.next, tomorrow);
+    r = await call(X.osul, { cookie: adm, query: { date: tomorrow } });
+    assert.deepEqual(r.body.items.map((x) => x.id), [b, c]);
+    // 편성용 조회는 운영자만
+    assert.equal((await call(X.osul, { cookie: g, query: { manage: '1' } })).status, 403);
+    r = await call(X.osul, { cookie: adm, query: { manage: '1', date: tomorrow } });
+    assert.deepEqual(r.body.ids, [b, c]);
+    assert.deepEqual(r.body.dates, [{ date: yesterday, count: 1 }, { date: today, count: 2 }, { date: tomorrow, count: 2 }]);
+    // 사케를 지우면 오술에서도 빠짐
+    await call(X.sakes, { method: 'DELETE', cookie: adm, query: { id: String(c) } });
+    r = await call(X.osul, { cookie: adm, query: { date: tomorrow } });
+    assert.deepEqual(r.body.items.map((x) => x.id), [b]);
+    // 빈 목록으로 저장하면 그날 비우기
+    await call(X.osul, { method: 'PUT', cookie: adm, body: { date: tomorrow, ids: [] } });
+    r = await call(X.osul, { cookie: adm, query: { manage: '1' } });
+    assert.ok(!r.body.dates.some((x) => x.date === tomorrow));
+    // 로그인 안 하면 못 봄
+    assert.equal((await call(X.osul, {})).status, 401);
+  });
+  await test('[오술 API] 잘못된 값 거절: 날짜, 중복, 없는 사케, 30병 초과, 배열 아님', async () => {
+    const X = freshServer();
+    const adm = cookieFrom(await call(X.auth, { method: 'POST', body: { action: 'admin', id: 'ADMIN', password: '880825' } }));
+    const id = (await call(X.sakes, { method: 'POST', cookie: adm, body: { name: '하나', tint: '#4f7cac' } })).body.sake.id;
+    const put = (body) => call(X.osul, { method: 'PUT', cookie: adm, body });
+    assert.equal((await put({ date: '2026-02-30', ids: [id] })).status, 400);
+    assert.equal((await put({ date: '내일', ids: [id] })).status, 400);
+    assert.equal((await put({ date: '2026-10-20', ids: [id, id] })).status, 400);
+    assert.equal((await put({ date: '2026-10-20', ids: [id + 999] })).status, 404);
+    assert.equal((await put({ date: '2026-10-20', ids: Array.from({ length: 31 }, (_, i) => i + 1) })).status, 400);
+    assert.equal((await put({ date: '2026-10-20', ids: 'x' })).status, 400);
+    assert.equal((await put({ date: '2026-10-20', ids: [1.5] })).status, 400);
+    assert.equal((await call(X.osul, { cookie: adm, query: { date: '2026-13-01' } })).status, 400);
+    assert.equal((await put({ date: '2026-10-20', ids: [id] })).status, 200);
+  });
+  await test('[오술 API] 데이터베이스 연결(store): 조회 주소와 저장 함수 이름', async () => {
+    const realFetch = global.fetch;
+    process.env.SUPABASE_URL = 'https://db.test';
+    process.env.SUPABASE_SECRET_KEY = 'sb_secret_x';
+    delete require.cache[require.resolve('../lib/store')];
+    const S = require('../lib/store');
+    const log = [];
+    global.fetch = async (url, init) => { log.push({ url, init }); return { ok: true, status: 200, text: async () => '[]' }; };
+    try {
+      await S.allOsul();
+      assert.equal(log[0].url, 'https://db.test/rest/v1/osul?select=day%2Csake_id%2Cpos&order=day.asc%2Cpos.asc');
+      await S.setOsul('2026-10-16', [3, 1]);
+      assert.equal(log[1].url, 'https://db.test/rest/v1/rpc/set_osul');
+      assert.deepEqual(JSON.parse(log[1].init.body), { p_day: '2026-10-16', p_ids: [3, 1] });
+    } finally {
+      global.fetch = realFetch;
+      delete process.env.SUPABASE_URL; delete process.env.SUPABASE_SECRET_KEY;
+      delete require.cache[require.resolve('../lib/store')];
+    }
+  });
 
   /* ================= 속도 개선 점검 ================= */
   await test('[속도] API 함수는 하나(api/[route].js)만 있고, 모르는 경로는 404', async () => {

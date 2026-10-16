@@ -5,6 +5,14 @@ function createFakeStore() {
   const copy = (o) => JSON.parse(JSON.stringify(o));
   return {
     _db: db,
+    async allOsul() {
+      return copy((db.osul || []).filter((o) => db.sakes.some((x) => x.id === o.sake_id)))
+        .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.pos - b.pos));
+    },
+    async setOsul(day, ids) {
+      db.osul = (db.osul || []).filter((o) => o.day !== day);
+      ids.forEach((id, i) => db.osul.push({ day, sake_id: id, pos: i + 1 }));
+    },
     async ping() { db.pings = (db.pings || 0) + 1; },
     async getGuest(nick) {
       const g = db.guests.find((x) => x.nickname.toLowerCase() === String(nick).toLowerCase());
@@ -33,6 +41,7 @@ function createFakeStore() {
       db.sakes = db.sakes.filter((x) => x.id !== id);
       db.ratings = db.ratings.filter((r) => r.sake_id !== id);
       db.wishes = db.wishes.filter((w) => w.sake_id !== id);
+      db.osul = (db.osul || []).filter((o) => o.sake_id !== id);
     },
     async removeImage(url) { db.images.delete(url); },
     async allRatingsLite() { return db.ratings.map((r) => ({ sake_id: r.sake_id, nickname: r.nickname, drank_on: r.drank_on, stars: r.stars ?? null })); },
