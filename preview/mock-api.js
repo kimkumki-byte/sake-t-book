@@ -72,6 +72,12 @@
   // 고친 리뷰 예시 (처음 쓴 날짜는 그대로 보여요)
   db.ratings.filter(function (r) { return r.sake_id === 2 && r.nickname === '예시손님'; })[0].updated_at = isoAgo(3, 20);
   db.wishes.push({ nickname: '예시손님', sake_id: 8, created_at: isoAgo(1, 12) });
+  // 찜 7개 → MY '마셔보고 싶어요'가 5개 + 2개로 페이지가 나뉘는 예시
+  [7, 6, 5, 4, 3, 2].forEach(function (id, i) { db.wishes.push({ nickname: '예시손님', sake_id: id, created_at: isoAgo(2 + i, 12) }); });
+  // PC에서 데모를 열어도 MY의 '홈 화면에 추가' 버튼이 보이게 안드로이드 폰인 척해요 (데모 전용)
+  if (!/iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '')) {
+    try { Object.defineProperty(navigator, 'userAgent', { get: function () { return 'Mozilla/5.0 (Linux; Android 14) 사케치북 데모'; } }); } catch (e) { /* 무시 */ }
+  }
 
   var me = null;
   function copy(o) { return JSON.parse(JSON.stringify(o)); }

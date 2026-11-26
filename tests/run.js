@@ -2098,16 +2098,84 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.equal(j.sakes.length, 2); assert.ok(!saved[2][1].includes('pw_hash'));
       assert.deepEqual(o.errors, []);
     });
-    await test('[화면 아이폰] 아이폰 사파리면 MY에 "홈 화면에 추가" 안내, 다른 기기는 안 보임', async () => {
+    await test('[화면 홈 화면 앱] 아이폰·안드로이드면 MY에 보라색 "홈 화면에 추가" 버튼(사케 요청하기 위), 누르면 방법 안내, PC·앱 안·이미 설치면 안 보임', async () => {
       const b = browser({ jar: gA }); await b.settle(); await b.settle();
       await b.tab('MY'); await b.settle();
-      assert.ok(!b.$('.iostip'), '아이폰이 아니면 안내 없음');
-      Object.defineProperty(b.w.navigator, 'userAgent', { get: () => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Safari' });
+      assert.ok(!b.$('.installbox'), 'PC면 버튼 없음');
+      let ua = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Safari';
+      Object.defineProperty(b.w.navigator, 'userAgent', { get: () => ua });
       await b.tab('홈'); await b.tab('MY'); await b.settle();
-      assert.ok(b.$('.iostip')); assert.match(b.$('.iostip').textContent, /홈 화면에 추가/);
+      assert.ok(b.$('.installbox .installbtn'), '아이폰이면 버튼');
+      assert.ok(!b.$('.installbox ol'), '처음엔 안내 접힘');
+      assert.equal(b.$('.installbtn .ic').textContent.trim(), '홈 화면에 추가');
+      const order = b.$$('.installbtn, [data-h="#/request"]').map((x) => x.getAttribute('data-a'));
+      assert.deepEqual(order, ['install', 'nav'], '마셔보고 싶은 사케 요청하기 버튼보다 위');
+      const rq = b.$('[data-h="#/request"]');
+      assert.equal(rq.querySelector('.ic').textContent.trim(), '마셔보고 싶은 사케 요청하기');
+      assert.ok(rq.classList.contains('ctabtn'), '요청 버튼도 보라색 중요 버튼');
+      await b.click(b.$('[data-a="install"]'));
+      assert.match(b.$('.installbox').textContent, /공유 버튼/); assert.match(b.$('.installbox').textContent, /홈 화면에 추가/);
+      await b.click(b.$('[data-a="install"]'));
+      assert.ok(!b.$('.installbox ol'), '다시 누르면 접힘');
+      ua = 'Mozilla/5.0 (Linux; Android 14; SM-S918N) Chrome/120 Mobile';
+      await b.tab('홈'); await b.tab('MY'); await b.settle();
+      await b.click(b.$('[data-a="install"]'));
+      assert.match(b.$('.installbox').textContent, /크롬/); assert.match(b.$('.installbox').textContent, /삼성 인터넷/);
+      // 크롬이 설치 창을 허락하면 버튼을 누를 때 바로 설치 창
+      let prompted = 0;
+      const ev = new b.w.Event('beforeinstallprompt', { cancelable: true });
+      ev.prompt = () => { prompted++; }; ev.userChoice = Promise.resolve({ outcome: 'accepted' });
+      b.w.dispatchEvent(ev); await b.settle();
+      assert.ok(ev.defaultPrevented, '크롬 기본 안내 띠 대신 버튼으로');
+      await b.click(b.$('[data-a="install"]')); await b.settle();
+      assert.equal(prompted, 1); assert.match(b.$('#toast').textContent, /홈 화면에 사케치북을 추가했어요/);
+      // 안드로이드 앱(APK) 안에서는 버튼 없음
+      b.w.SKAPP = { saveText() {} };
+      await b.tab('홈'); await b.tab('MY'); await b.settle();
+      assert.ok(!b.$('.installbox'), '안드로이드 앱 안이면 안 보임');
+      delete b.w.SKAPP;
       Object.defineProperty(b.w.navigator, 'standalone', { get: () => true });
       await b.tab('홈'); await b.tab('MY'); await b.settle();
-      assert.ok(!b.$('.iostip'), '이미 홈 화면 앱으로 열었으면 안내 안 함');
+      assert.ok(!b.$('.installbox'), '이미 홈 화면 앱으로 열었으면 안 보임');
+      assert.deepEqual(b.errors, []);
+    });
+    await test('[화면 MY] 내가 쓴 리뷰·마셔보고 싶어요는 5개씩, 페이지 버튼으로 넘김', async () => {
+      const gP = await signup('페이지', 'page1');
+      const ids = [];
+      for (let i = 1; i <= 7; i++) ids.push((await call(X.sakes, { method: 'POST', cookie: adm, body: { name: '페이지술' + i } })).body.sake.id);
+      for (const id of ids) assert.equal((await call(X.wish, { method: 'POST', cookie: gP, body: { sakeId: id, on: true } })).status, 200);
+      for (let i = 0; i < 12; i++) assert.equal((await call(X.rate, { method: 'POST', cookie: gP, body: { sakeId: ids[i % 7], v: [3, 3, 3, 3, 3], stars: 1 + (i % 5) } })).status, 200);
+      const b = browser({ jar: gP }); await b.settle(); await b.settle();
+      await b.tab('MY'); await b.settle();
+      assert.equal(b.$$('#myrevs .mrev').length, 5);
+      const rnav = b.$('.pgnav[data-k="rev"]');
+      assert.deepEqual(Array.from(rnav.querySelectorAll('.num')).map((x) => x.textContent), ['1', '2', '3']);
+      assert.equal(rnav.querySelector('[aria-current="page"]').textContent, '1');
+      assert.ok(rnav.querySelector('[aria-label="이전 페이지"]').disabled, '첫 페이지면 이전 버튼 꺼짐');
+      const first = b.$$('#myrevs .mrev').map((x) => x.textContent);
+      await b.click(b.$('.pgnav[data-k="rev"] [data-p="2"].num'));
+      assert.equal(b.$$('#myrevs .mrev').length, 2, '12개 → 마지막 페이지 2개');
+      assert.ok(b.$('.pgnav[data-k="rev"] [aria-label="다음 페이지"]').disabled);
+      await b.click(b.$('.pgnav[data-k="rev"] [aria-label="이전 페이지"]'));
+      assert.equal(b.$('.pgnav[data-k="rev"] [aria-current="page"]').textContent, '2');
+      assert.notDeepEqual(b.$$('#myrevs .mrev').map((x) => x.textContent), first);
+      // 정렬을 바꾸면 첫 페이지로
+      await b.click(b.$('[data-a="mysort"][data-s="stars"]'));
+      assert.equal(b.$('.pgnav[data-k="rev"] [aria-current="page"]').textContent, '1');
+      assert.match(b.$$('#myrevs .mrev')[0].textContent, /5/);
+      // 마셔보고 싶어요: 7개 → 5 + 2, 리뷰 페이지와 따로
+      assert.equal(b.$$('#mywish > *').length, 5);
+      await b.click(b.$('.pgnav[data-k="wish"] [aria-label="다음 페이지"]'));
+      assert.equal(b.$$('#mywish > *').length, 2);
+      assert.equal(b.$('.pgnav[data-k="rev"] [aria-current="page"]').textContent, '1', '리뷰 페이지는 그대로');
+      // CSV는 페이지와 상관없이 전부
+      assert.equal(b.w.SKDEBUG.csv().split(String.fromCharCode(10)).length, 13, '리뷰 12개 + 제목 줄');
+      assert.deepEqual(b.errors, []);
+    });
+    await test('[화면 MY] 5개 이하면 페이지 버튼 없음', async () => {
+      const b = browser({ jar: gA }); await b.settle(); await b.settle();
+      await b.tab('MY'); await b.settle();
+      assert.ok(b.$$('#myrevs .mrev').length <= 5); assert.ok(!b.$('.pgnav'));
     });
     await test('[아이폰] index.html에 홈 화면 앱 설정(manifest·아이콘), manifest.json 내용', async () => {
       const ix = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
@@ -2117,6 +2185,15 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       const m = JSON.parse(fs.readFileSync(path.join(ROOT, 'public/manifest.json'), 'utf8'));
       assert.equal(m.name, '사케치북'); assert.equal(m.display, 'standalone'); assert.equal(m.start_url, '/');
       assert.ok(fs.existsSync(path.join(ROOT, 'public', m.icons[0].src)));
+      // 안드로이드 크롬 설치 조건: 192·512 아이콘, 서비스 워커
+      for (const sz of ['192x192', '512x512']) {
+        const ic = m.icons.find((x) => x.sizes === sz);
+        assert.ok(ic, sz + ' 아이콘'); assert.ok(fs.existsSync(path.join(ROOT, 'public', ic.src)));
+      }
+      assert.ok(fs.existsSync(path.join(ROOT, 'public/icon-180.png'))); assert.match(ix, /apple-touch-icon" href="\/icon-180.png"/);
+      const sw = fs.readFileSync(path.join(ROOT, 'public/sw.js'), 'utf8');
+      assert.match(sw, /addEventListener\('fetch'/); assert.doesNotMatch(sw, /caches\./, '캐시 안 함(배포하면 바로 최신)');
+      assert.match(appJs, /serviceWorker\.register\('\/sw\.js'\)/);
     });
   }
 

@@ -506,5 +506,21 @@ body.has-tabbar .toast{bottom:calc(84px + env(safe-area-inset-bottom,0px))}
 .reqrow .head{display:flex;align-items:center;gap:8px;justify-content:space-between}
 .reqrow .head b{font-weight:600}
 .reqrow p{margin:0;font-size:13.5px;white-space:pre-line}
-.iostip{display:flex;flex-direction:column;gap:4px}
-.iostip ol{margin:0;padding-left:18px;line-height:1.7}
+/* 중요 버튼(홈 화면에 추가 · 마셔보고 싶은 사케 요청하기): 보라색으로 꽉 채움 */
+.panel.menurow.ctabtn{background:var(--me);color:var(--me-ink);border:0;border-radius:10px;padding:15px 16px;font-weight:700;font-size:15px;box-shadow:0 4px 14px rgba(82,48,245,.28)}
+.ctabtn .ic{display:inline-flex;align-items:center;gap:10px}
+.ctabtn svg{width:20px;height:20px;flex:none}
+.ctabtn .go{color:var(--me-ink)}
+.ctabtn:active{filter:brightness(.92)}
+.installbox{padding:0;border:0;background:none;display:flex;flex-direction:column;gap:8px}
+.installbox>.menurow.installbtn{background:var(--me);color:var(--me-ink);border:0;border-radius:10px;padding:15px 16px;font-weight:700;font-size:15px;box-shadow:0 4px 14px rgba(82,48,245,.28)}
+.installbox>.menurow.installbtn .ic{display:inline-flex;align-items:center;gap:10px}
+.installbox>.menurow.installbtn svg{width:20px;height:20px;flex:none}
+.installbox>.menurow.installbtn .go{color:var(--me-ink)}
+.installbox>.menurow.installbtn:active{filter:brightness(.92)}
+.installbox ol{margin:0;padding:12px 16px 12px 34px;line-height:1.7;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+/* MY 목록 페이지 버튼 */
+.pgnav{display:flex;justify-content:center;gap:4px;margin:2px 0 4px}
+.pgnav button{min-width:34px;height:34px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--muted);font-size:13px;font-weight:500}
+.pgnav button[aria-current="page"]{background:var(--me);border-color:var(--me);color:var(--me-ink);font-weight:700}
+.pgnav button:disabled{opacity:.35}

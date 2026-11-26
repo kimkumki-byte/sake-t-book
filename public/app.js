@@ -47,6 +47,9 @@
     ctx: 'list',         // 상세로 들어온 곳: 'list'(사케) | 'osul'(오술) → 뒤로가기·이전/다음 술 순서
     oe: null,            // 운영자 오술 편성 { date, ids, saved, dates, q, busy, err }
     mySort: 'new',
+    myPage: { rev: 0, wish: 0 }, // MY 목록 페이지 (5개씩)
+    installEvt: null,    // 안드로이드 크롬의 '앱 설치' 창 (뜰 수 있을 때만)
+    installOpen: false,  // '홈 화면에 추가' 안내 펼침
     guests: null,        // 운영자: 손님 목록
     resetFor: null,      // 운영자: 비밀번호 초기화 확인 중인 닉네임
     resetDone: null,     // 운영자: 방금 만든 임시 비밀번호 { nickname, temp } (화면을 떠나면 사라져요)
@@ -917,19 +920,66 @@
         '</form>');
   }
 
-  // 아이폰 사파리에서 "홈 화면에 추가"하면 앱처럼 쓸 수 있어요 (이미 홈 화면에서 열었으면 안내 안 함)
+  // 안드로이드·아이폰에서 "홈 화면에 추가"하면 주소창 없이 앱처럼 쓸 수 있어요
   function isIOS() {
     var ua = navigator.userAgent || '';
     return /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   }
+  function isAndroid() { return /Android/i.test(navigator.userAgent || ''); }
   function isStandalone() {
-    return navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    return navigator.standalone === true || !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
   }
-  function iosTip() {
-    if (!isIOS() || isStandalone()) return '';
-    return '<div class="panel iostip"><b>아이폰에서 앱처럼 쓰기</b><ol class="tiny">' +
-      '<li>사파리 아래쪽 <b>공유 버튼</b>(네모에 위쪽 화살표)을 눌러요</li><li><b>"홈 화면에 추가"</b>를 눌러요</li>' +
-      '<li>홈 화면의 사케치북 아이콘으로 열면 주소창 없이 앱처럼 열려요</li></ol></div>';
+  // 'prompt'(바로 설치 창) | 'ios' | 'android' | ''(버튼 안 보임: 이미 앱으로 열었거나 PC)
+  function installMode() {
+    if (window.SKAPP || isStandalone()) return '';
+    if (S.installEvt) return 'prompt';
+    if (isIOS()) return 'ios';
+    if (isAndroid()) return 'android';
+    return '';
+  }
+  function installBox() {
+    var m = installMode();
+    if (!m) return '';
+    var h = '<div class="panel installbox"><button class="menurow installbtn" data-a="install" aria-expanded="' + (m !== 'prompt' && S.installOpen) + '">' +
+      '<span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M12 9v6M9 12h6"/></svg>홈 화면에 추가</span><span class="go" aria-hidden="true">' + (m !== 'prompt' && S.installOpen ? '−' : '›') + '</span></button>';
+    if (m !== 'prompt' && S.installOpen) {
+      h += m === 'ios'
+        ? '<ol class="tiny"><li>사파리 아래쪽 <b>공유 버튼</b>(네모에 위쪽 화살표)을 눌러요</li><li>목록을 내려 <b>"홈 화면에 추가"</b>를 눌러요</li>' +
+          '<li>홈 화면의 사케치북 아이콘으로 열면 주소창 없이 앱처럼 열려요</li></ol>'
+        : '<ol class="tiny"><li><b>크롬</b>: 오른쪽 위 <b>⋮</b> 메뉴 → <b>"홈 화면에 추가"</b> 또는 <b>"앱 설치"</b></li>' +
+          '<li><b>삼성 인터넷</b>: 아래쪽 <b>≡</b> 메뉴 → <b>"현재 페이지 추가"</b> → <b>"홈 화면"</b></li>' +
+          '<li>홈 화면의 사케치북 아이콘으로 열면 주소창 없이 앱처럼 열려요</li></ol>';
+    }
+    return h + '</div>';
+  }
+  function installApp() {
+    var ev = S.installEvt;
+    if (!ev) { S.installOpen = !S.installOpen; render(); return; }
+    try {
+      ev.prompt();
+      Promise.resolve(ev.userChoice).then(function (c) {
+        if (c && c.outcome === 'accepted') { S.installEvt = null; toast('홈 화면에 사케치북을 추가했어요'); render(); }
+      });
+    } catch (e) { S.installEvt = null; S.installOpen = true; render(); }
+  }
+
+  // 목록을 5개씩 나눠 보여줘요: 지금 페이지의 항목과 페이지 버튼
+  var PER_PAGE = 5;
+  function pageOf(k, list) {
+    var n = Math.max(1, Math.ceil(list.length / PER_PAGE));
+    var p = Math.min(Math.max(S.myPage[k] || 0, 0), n - 1);
+    S.myPage[k] = p;
+    return { items: list.slice(p * PER_PAGE, p * PER_PAGE + PER_PAGE), nav: pageNav(k, p, n) };
+  }
+  function pageNav(k, p, n) {
+    if (n <= 1) return '';
+    var from = Math.max(0, Math.min(p - 2, n - 5)), to = Math.min(n, from + 5), h = '';
+    h += '<button data-a="mypage" data-k="' + k + '" data-p="' + (p - 1) + '"' + (p === 0 ? ' disabled' : '') + ' aria-label="이전 페이지">‹</button>';
+    for (var i = from; i < to; i++) {
+      h += '<button class="num" data-a="mypage" data-k="' + k + '" data-p="' + i + '"' + (i === p ? ' aria-current="page"' : '') + '>' + (i + 1) + '</button>';
+    }
+    h += '<button data-a="mypage" data-k="' + k + '" data-p="' + (p + 1) + '"' + (p === n - 1 ? ' disabled' : '') + ' aria-label="다음 페이지">›</button>';
+    return '<nav class="pgnav" data-k="' + k + '" aria-label="페이지">' + h + '</nav>';
   }
 
   function vMy() {
@@ -939,6 +989,7 @@
       '<div class="mystats"><div><b class="num">' + d.count + '병</b><span class="tiny">평가</span></div>' +
       '<div><b class="num">' + d.badges_got + '/' + d.badges_total + '</b><span class="tiny">뱃지</span></div>' +
       '<div><b class="num">' + (d.avg_stars != null ? '★ ' + f1(d.avg_stars) : '—') + '</b><span class="tiny">내가 준 평균 별점</span></div></div></section>';
+    h += installBox(); // 홈 화면에 추가 (마셔보고 싶은 사케 요청하기·운영자 메뉴보다 위)
     if (d.role === 'admin') {
       h += '<button class="menurow panel" data-a="nav" data-h="#/admin"><span>운영자 메뉴 · 사케 등록·관리</span><span class="go">›</span></button>' +
         '<button class="menurow panel" data-a="nav" data-h="#/osul/manage"><span>오술 관리 · 날짜별 오늘 마실 술 정하기</span><span class="go">›</span></button>' +
@@ -946,9 +997,8 @@
         '<button class="menurow panel" data-a="nav" data-h="#/admin/guests"><span>손님 관리 · 비밀번호 초기화</span><span class="go">›</span></button>' +
         '<button class="menurow panel" data-a="nav" data-h="#/admin/backup"><span>데이터 백업 · 엑셀로 모두 저장</span><span class="go">›</span></button>';
     } else {
-      h += '<button class="menurow panel" data-a="nav" data-h="#/request"><span>사케 요청하기 · 마셔보고 싶은 사케 알려주기</span><span class="go">›</span></button>';
+      h += '<button class="menurow panel ctabtn" data-a="nav" data-h="#/request"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5h4M10.5 2.5v4.2c0 .8-.4 1.5-1 2-1.6 1.2-2.5 3-2.5 5V19a2.5 2.5 0 0 0 2.5 2.5h5A2.5 2.5 0 0 0 17 19v-5.3c0-2-.9-3.8-2.5-5-.6-.5-1-1.2-1-2V2.5"/><path d="M12 13v5M9.5 15.5h5"/></svg>마셔보고 싶은 사케 요청하기</span><span class="go" aria-hidden="true">›</span></button>';
     }
-    h += iosTip();
     h += yearReport(d);
     h += '<div class="sec"><h2>뱃지 모음 <span class="num muted">' + d.badges_got + '/' + d.badges_total + '</span></h2></div><div class="badges">' + d.badges.map(badgeTile).join('') + '</div>';
     h += '<div class="sec"><h2>별점이 비슷한 친구</h2></div>';
@@ -959,13 +1009,15 @@
         }).join('') + '</div><p class="tiny" style="margin:0">같은 사케에 준 별점이 비슷할수록 일치도가 높아요.</p>'
       : '<div class="panel muted center">아직 비교할 친구가 없어요.<br><span class="tiny">같은 사케를 2병 이상 함께 평가한 친구가 생기면 보여요.</span></div>';
     h += '<div class="sec"><h2>마셔보고 싶어요 <span class="num muted">' + d.wishes.length + '</span></h2></div>';
-    h += d.wishes.length ? '<div class="list">' + d.wishes.map(mini).join('') + '</div>'
+    var wp = pageOf('wish', d.wishes);
+    h += d.wishes.length ? '<div class="list" id="mywish">' + wp.items.map(mini).join('') + '</div>' + wp.nav
       : '<div class="panel muted center">사케 화면에서 ♡ 찜을 누르면 여기에 모여요.</div>';
     var rv = d.reviews.slice();
     if (S.mySort === 'stars') rv.sort(function (a, b) { return (b.stars || 0) - (a.stars || 0) || String(b.at).localeCompare(String(a.at)); });
     h += '<div class="sec"><h2>내가 쓴 리뷰 <span class="num muted">' + rv.length + '</span></h2>' +
       (rv.length > 1 ? '<span class="seg minis" role="group" aria-label="리뷰 정렬"><button data-a="mysort" data-s="new" aria-pressed="' + (S.mySort === 'new') + '">최신순</button><button data-a="mysort" data-s="stars" aria-pressed="' + (S.mySort === 'stars') + '">별점순</button></span>' : '') + '</div>';
-    h += rv.length ? '<div class="list" id="myrevs">' + rv.map(myReview).join('') + '</div><button class="btn ghost" data-a="csv">내 기록 엑셀로 저장</button>'
+    var rp = pageOf('rev', rv);
+    h += rv.length ? '<div class="list" id="myrevs">' + rp.items.map(myReview).join('') + '</div>' + rp.nav + '<button class="btn ghost" data-a="csv">내 기록 엑셀로 저장</button>'
       : '<div class="panel muted center">아직 쓴 리뷰가 없어요.</div>';
     h += '<div class="sec"><h2>계정</h2></div><div class="panel acct">' + acctHtml(d) + '</div>';
     return h;
@@ -1611,7 +1663,15 @@
       S.rank.offset += od; render(); loadRanking();
     }
     else if (a === 'wish') { toggleWish(+el.getAttribute('data-id')); }
-    else if (a === 'mysort') { S.mySort = el.getAttribute('data-s'); render(); }
+    else if (a === 'mysort') { S.mySort = el.getAttribute('data-s'); S.myPage.rev = 0; render(); }
+    else if (a === 'mypage') {
+      var pk = el.getAttribute('data-k');
+      S.myPage[pk] = +el.getAttribute('data-p'); render();
+      // 바뀐 목록의 제목이 보이게 살짝 올려줘요
+      var lst = document.getElementById(pk === 'rev' ? 'myrevs' : 'mywish');
+      if (lst && lst.previousElementSibling && lst.previousElementSibling.scrollIntoView) lst.previousElementSibling.scrollIntoView({ block: 'start' });
+    }
+    else if (a === 'install') { installApp(); }
     else if (a === 'acct') {
       var k = el.getAttribute('data-k');
       S.acct = S.acct === k ? '' : k; S.acctErr = ''; S.byeConfirm = false; S.byePw = '';
@@ -1722,6 +1782,17 @@
   });
 
   window.addEventListener('hashchange', onRoute);
+
+  // 안드로이드 크롬: '앱 설치' 창을 바로 띄울 수 있으면 기억해 두고 MY 버튼으로 띄워요
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault(); S.installEvt = e;
+    if (S.my) render();
+  });
+  window.addEventListener('appinstalled', function () { S.installEvt = null; if (S.my) render(); });
+  // 설치 조건을 채우는 서비스 워커 (안드로이드 앱 안이나 파일로 연 데모에선 안 씀)
+  if ('serviceWorker' in navigator && !window.SKAPP && /^https?:$/.test(location.protocol)) {
+    try { navigator.serviceWorker.register('/sw.js').catch(function () { /* 실패해도 사이트는 그대로 */ }); } catch (e) { /* 무시 */ }
+  }
 
   /* ---------- 보기 설정 기억 (이 기기에서만) ---------- */
   try {
