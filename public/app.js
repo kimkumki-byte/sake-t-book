@@ -488,7 +488,7 @@
         return '<div><b>' + it.n + '</b><span class="t">' + t + '</span><span class="v num"><em class="me">' + my[i] + '</em> / <em class="avg">' + f1(a[i]) + '</em></span></div>';
       }).join('') + '</div>' +
       '<div class="row2"><button class="btn ghost" data-a="nav" data-h="#/sake/' + s.id + '/rate/' + d.my.id + '">내 평가 수정</button>' +
-      '<button class="btn" data-a="nav" data-h="#/sake/' + s.id + '/rate">다시 마셨어요 · 새 기록</button></div></div>';
+      '<button class="btn" data-a="nav" data-h="#/sake/' + s.id + '/rate">다시 마셨어요</button></div></div>';
 
     // 내 기록: 같은 사케를 여러 번 마셨으면 모두 보여주고, 하나씩 고치거나 지울 수 있어요
     var mine = d.mine && d.mine.length ? d.mine : [d.my];

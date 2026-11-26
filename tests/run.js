@@ -952,7 +952,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.equal(b.$('.review.mine .date').textContent, ((d) => (d.getMonth() + 1) + '월 ' + d.getDate() + '일 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'))(new Date(r.created_at)), '보이는 날짜는 처음 쓴 날짜');
     });
     await test('[여러 번 리뷰] "다시 마셨어요" → 빈 새 기록 → 저장하면 내 기록 2개, 목록 "2번", 캘린더 두 날짜', async () => {
-      await b.click(b.btn('다시 마셨어요 · 새 기록'));
+      await b.click(b.btn('다시 마셨어요'));
       assert.match(b.w.location.hash, new RegExp('#/sake/' + s5 + '/rate$'));
       assert.match(b.text(), /다시 마신 기록/);
       assert.equal(b.$$('.starpick .st.on').length + b.$$('.starpick .st.half').length, 0, '새 기록은 별점이 비어 있음');
@@ -1993,7 +1993,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.match(b.$('#tastechg .legend').textContent, /\(최근\)/);
       assert.ok(b.$$('#mylog .chip.tmpc').some((c) => c.textContent === '차갑게'), '내 기록에 온도');
       assert.ok(b.$$('.review .chip.tmpc').some((c) => c.textContent === '차갑게'), '리뷰에 온도');
-      await b.click(b.btn('다시 마셨어요 · 새 기록'));
+      await b.click(b.btn('다시 마셨어요'));
       assert.equal(b.$$('.temps .tempbtn').length, 4);
       assert.deepEqual(b.$$('.temps .tempbtn').map((x) => x.textContent), ['차갑게', '상온', '따뜻하게', '뜨겁게']);
       assert.ok(b.$$('.temps .tempbtn').every((x) => x.getAttribute('aria-pressed') === 'false'), '새 기록은 온도 비어 있음');
