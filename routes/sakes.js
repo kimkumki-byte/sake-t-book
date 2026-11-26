@@ -1,5 +1,6 @@
 // 사케 목록 보기(로그인한 모두), 등록·수정·삭제(운영자만)
 const store = require('../lib/store');
+const core = require('../lib/core');
 const v = require('../lib/validate');
 const { HttpError, handler, send } = require('../lib/http');
 const { requireSession, requireAdmin } = require('../lib/auth');
@@ -42,20 +43,27 @@ module.exports = handler(['GET', 'POST', 'PATCH', 'DELETE'], async (req, res) =>
     const me = requireSession(req);
     const [sakes, ratings, wishes] = await Promise.all([store.listSakes(), store.allRatingsLite(), store.listWishes(me.nick)]);
     const wished = new Set(wishes.map((w) => w.sake_id));
-    const counts = {};
-    const mine = {}; // 내가 평가한 사케 → { 마신 날짜, 내 별점 }
+    const people = {}; // 사케별 평가한 사람 (여러 번 기록해도 1명)
+    const mine = {};   // 내가 평가한 사케 → 가장 최근 기록 + 기록 횟수 + 마신 날짜들
     ratings.forEach((r) => {
-      counts[r.sake_id] = (counts[r.sake_id] || 0) + 1;
-      if (r.nickname === me.nick) mine[r.sake_id] = { drank_on: r.drank_on || null, stars: r.stars ?? null };
+      (people[r.sake_id] = people[r.sake_id] || new Set()).add(r.nickname);
+      if (r.nickname !== me.nick) return;
+      const m = mine[r.sake_id] || (mine[r.sake_id] = { last: null, times: 0, days: [] });
+      m.times += 1;
+      if (r.drank_on) m.days.push(r.drank_on);
+      if (!m.last || core.byLatest(r, m.last) < 0) m.last = r;
     });
     return send(res, 200, {
-      sakes: sakes.map((s) => ({
-        id: s.id, name: s.name, brewer: s.brewer, origin: s.origin, tint: s.tint, img_url: s.img_url,
-        created_at: s.created_at, n: counts[s.id] || 0,
-        rated: Object.prototype.hasOwnProperty.call(mine, s.id),
-        drank_on: mine[s.id] ? mine[s.id].drank_on : null, stars: mine[s.id] ? mine[s.id].stars : null,
-        wished: wished.has(s.id),
-      })),
+      sakes: sakes.map((s) => {
+        const m = mine[s.id];
+        return {
+          id: s.id, name: s.name, brewer: s.brewer, origin: s.origin, tint: s.tint, img_url: s.img_url,
+          created_at: s.created_at, n: people[s.id] ? people[s.id].size : 0,
+          rated: !!m, times: m ? m.times : 0, days: m ? m.days.sort() : [],
+          drank_on: m ? m.last.drank_on || null : null, stars: m ? m.last.stars ?? null : null,
+          wished: wished.has(s.id),
+        };
+      }),
     });
   }
 

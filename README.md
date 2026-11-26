@@ -51,12 +51,10 @@
 
 ## 수정사항 반영하기 (업데이트)
 
-1. 받은 업데이트 zip을 풀면 `api`, `lib`, `public`, `supabase` 같은 폴더가 나와요.
-2. GitHub 저장소 첫 화면 → **Add file → Upload files**
-3. 풀린 폴더들을 **폴더째** 끌어다 놓기 → **Commit changes**
-   - 같은 이름의 파일은 새 파일로 바뀌고, 나머지 파일은 그대로 남아요.
-4. 1분 정도 뒤 Vercel이 자동으로 새로 배포해요. 사이트를 새로고침해서 확인하면 끝.
-5. 업데이트에 `supabase/update-...sql` 파일이 들어 있으면, 코드 올리기 **전에** Supabase → SQL Editor 에서 한 번 실행해요.
+지금은 Claude(또는 내 컴퓨터의 Claude Code)가 `git push`로 GitHub `main`에 바로 올려요. 올리면 1~2분 뒤 Vercel이 자동으로 새로 배포해요.
+작업 방식·주의사항은 `CLAUDE.md`에 모두 정리되어 있어요.
+
+- 데이터베이스 변경(`supabase/update-...sql`)이 있으면 코드 올리기 **전에** Supabase → SQL Editor 에서 한 번 실행해요.
 
 ## 알아 두면 좋은 것
 
@@ -77,3 +75,5 @@
 | `supabase/schema.sql` | 데이터베이스 만드는 SQL (2단계에서 한 번만 실행) |
 | `vercel.json` | Vercel 설정 |
 | `tests/` | 자체 테스트 (`npm test`) — 배포에는 포함 안 됨 |
+| `preview/` | 데모(미리보기) 만들기: `python preview/build-demo.py` → `preview/demo.html` |
+| `CLAUDE.md` | Claude가 이어서 작업할 때 읽는 안내서 (기획·구조·배포 방법) |

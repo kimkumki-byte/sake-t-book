@@ -1,6 +1,6 @@
-// 테스트용 가짜 데이터베이스. 실제 Supabase와 같은 규칙(닉네임 중복 금지, 삭제 시 평가도 삭제, 한 사람 한 평가)을 흉내 내요.
+// 테스트용 가짜 데이터베이스. 실제 Supabase와 같은 규칙(닉네임 중복 금지, 삭제 시 평가도 삭제, 같은 사케 여러 번 리뷰 가능, 리뷰는 본인만 수정·삭제)을 흉내 내요.
 function createFakeStore() {
-  const db = { sakes: [], guests: [], ratings: [], wishes: [], images: new Set(), seq: 0, rseq: 0, clock: Date.parse('2026-10-06T05:00:00Z') };
+  const db = { sakes: [], guests: [], ratings: [], wishes: [], requests: [], fails: {}, qseq: 0, images: new Set(), seq: 0, rseq: 0, clock: Date.now() - 86400000 }; // 시계는 하루 전부터 (날짜가 지나도 '새 사케' 판정이 맞게)
   const now = () => new Date((db.clock += 60000)).toISOString();
   const copy = (o) => JSON.parse(JSON.stringify(o));
   return {
@@ -22,7 +22,7 @@ function createFakeStore() {
       if (db.guests.some((x) => x.nickname.toLowerCase() === nick.toLowerCase())) {
         const e = new Error('duplicate'); e.code = 'DUP'; throw e;
       }
-      db.guests.push({ nickname: nick, pw_hash: pwHash });
+      db.guests.push({ nickname: nick, pw_hash: pwHash, created_at: now() });
     },
     async listSakes() { return copy(db.sakes).reverse(); },
     async getSake(id) { const s = db.sakes.find((x) => x.id === id); return s ? copy(s) : null; },
@@ -44,15 +44,27 @@ function createFakeStore() {
       db.osul = (db.osul || []).filter((o) => o.sake_id !== id);
     },
     async removeImage(url) { db.images.delete(url); },
-    async allRatingsLite() { return db.ratings.map((r) => ({ sake_id: r.sake_id, nickname: r.nickname, drank_on: r.drank_on, stars: r.stars ?? null })); },
+    async allRatingsLite() { return db.ratings.map((r) => ({ id: r.id, sake_id: r.sake_id, nickname: r.nickname, drank_on: r.drank_on, stars: r.stars ?? null, created_at: r.created_at })); },
     async ratingsFor(id) {
-      return copy(db.ratings.filter((r) => r.sake_id === id)).sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+      return copy(db.ratings.filter((r) => r.sake_id === id)).sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
     },
-    async upsertRating({ sake_id, nickname, v, comment, drank_on, stars }) {
+    async insertRating({ sake_id, nickname, v, comment, drank_on, stars, temp = null }) {
       if (!db.sakes.some((s) => s.id === sake_id)) throw new Error('foreign key');
-      const r = db.ratings.find((x) => x.sake_id === sake_id && x.nickname === nickname);
-      if (r) Object.assign(r, { v, comment, drank_on, stars, updated_at: now() });
-      else db.ratings.push({ id: ++db.rseq, sake_id, nickname, v, comment, drank_on, stars, updated_at: now() });
+      const at = now();
+      const id = ++db.rseq;
+      db.ratings.push({ id, sake_id, nickname, v, comment, drank_on, stars, temp, created_at: at, updated_at: at });
+      return id;
+    },
+    async updateRating(id, nickname, { v, comment, drank_on, stars, temp = null }) {
+      const r = db.ratings.find((x) => x.id === id && x.nickname === nickname);
+      if (!r) return null;
+      Object.assign(r, { v, comment, drank_on, stars, temp, updated_at: now() });
+      return copy(r);
+    },
+    async deleteRating(id, nickname) {
+      const before = db.ratings.length;
+      db.ratings = db.ratings.filter((x) => !(x.id === id && x.nickname === nickname));
+      return before - db.ratings.length;
     },
     async allRatings() { return copy(db.ratings).map((r) => ({ ...r, stars: r.stars ?? null })); },
     async listWishes(nick) {
@@ -71,6 +83,8 @@ function createFakeStore() {
       g.nickname = newNick;
       db.ratings.forEach((r) => { if (r.nickname === oldNick) r.nickname = newNick; });
       db.wishes.forEach((w) => { if (w.nickname === oldNick) w.nickname = newNick; });
+      db.requests.forEach((q) => { if (q.nickname === oldNick) q.nickname = newNick; });
+      delete db.fails['g:' + oldNick.toLowerCase()];
     },
     async setPassword(nick, pwHash) {
       const g = db.guests.find((x) => x.nickname.toLowerCase() === nick.toLowerCase());
@@ -79,7 +93,32 @@ function createFakeStore() {
     async deleteGuest(nick) {
       db.ratings = db.ratings.filter((r) => r.nickname !== nick);
       db.wishes = db.wishes.filter((w) => w.nickname !== nick);
+      db.requests = db.requests.filter((q) => q.nickname !== nick);
+      delete db.fails['g:' + nick.toLowerCase()];
       db.guests = db.guests.filter((g) => g.nickname.toLowerCase() !== nick.toLowerCase());
+    },
+    async listGuests() { return copy(db.guests).map((g) => ({ nickname: g.nickname, created_at: g.created_at || null })); },
+    async getLoginFail(key) { return db.fails[key] ? copy({ key, ...db.fails[key] }) : null; },
+    async setLoginFail(key, fails, lockedUntil) { db.fails[key] = { fails, locked_until: lockedUntil }; },
+    async clearLoginFail(key) { delete db.fails[key]; },
+    async listRequests(nick) {
+      return copy(db.requests.filter((q) => !nick || q.nickname === nick)).sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
+    },
+    async createRequest({ nickname, name, note }) {
+      const q = { id: ++db.qseq, nickname, name, note, done: false, created_at: now() };
+      db.requests.push(q);
+      return copy(q);
+    },
+    async setRequestDone(id, done) {
+      const q = db.requests.find((x) => x.id === id);
+      if (!q) return null;
+      q.done = done;
+      return { id, done };
+    },
+    async deleteRequest(id, nick) {
+      const before = db.requests.length;
+      db.requests = db.requests.filter((x) => !(x.id === id && (!nick || x.nickname === nick)));
+      return before - db.requests.length;
     },
     async uploadImage(buf, type) {
       const url = `https://fake.supabase.co/storage/v1/object/public/sake-images/${db.images.size + 1}-${Date.now()}.${type.split('/')[1]}`;

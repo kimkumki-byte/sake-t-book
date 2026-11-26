@@ -14,6 +14,10 @@
     { n: '알콜감', lo: '부드러워요', hi: '알코올이 강해요', w: ['부드러워요', '부드러운 편이에요', '적당해요', '알코올이 느껴져요', '알코올이 강해요'] },
     { n: '여운', lo: '금방 사라져요', hi: '오래 남아요', w: ['금방 사라져요', '짧은 편이에요', '적당해요', '긴 편이에요', '오래 남아요'] }
   ];
+  // 마신 온도 (사케는 온도에 따라 맛이 크게 달라요)
+  var TEMPS = [['cold', '차갑게'], ['room', '상온'], ['warm', '따뜻하게'], ['hot', '뜨겁게']];
+  function tempLabel(t) { var x = TEMPS.filter(function (y) { return y[0] === t; })[0]; return x ? x[1] : ''; }
+  function tempChip(t) { return t && tempLabel(t) ? '<span class="chip tmpc">' + tempLabel(t) + '</span>' : ''; }
   var EMPTY_FORM = { id: null, name: '', rice: '', polish: '', abv: '', smv: '', acid: '', brewer: '', origin: '', desc_title: '', desc_body: '', tint: TINTS[0], img_url: null, image: null, clearImage: false };
 
   /* ---------- 상태 ---------- */
@@ -22,14 +26,14 @@
     adminNick: '',
     authTab: 'login',
     authErr: '',
-    showOpLogin: false,
     sakes: null,         // 목록
     detail: null,        // 상세 (서버 응답 그대로)
     dcache: {},          // 한 번 본 상세는 기억해 두고 바로 보여줘요 (뒤에서 새로 고침)
-    draft: null,         // 작성 중인 평가 { id, v, t }
+    draft: null,         // 작성 중인 평가 { id, rid(고칠 리뷰 번호, 새 기록이면 null), v, t, d, s }
     form: clone(EMPTY_FORM), // 운영자 등록/수정 폼
     formErr: '',
     delId: null,
+    delRev: null,        // 지우기 확인 중인 내 리뷰 번호
     busy: false,
     loadErr: '',
     // 목록 분류·검색·캘린더
@@ -43,6 +47,12 @@
     ctx: 'list',         // 상세로 들어온 곳: 'list'(사케) | 'osul'(오술) → 뒤로가기·이전/다음 술 순서
     oe: null,            // 운영자 오술 편성 { date, ids, saved, dates, q, busy, err }
     mySort: 'new',
+    guests: null,        // 운영자: 손님 목록
+    resetFor: null,      // 운영자: 비밀번호 초기화 확인 중인 닉네임
+    resetDone: null,     // 운영자: 방금 만든 임시 비밀번호 { nickname, temp } (화면을 떠나면 사라져요)
+    reqs: null,          // 사케 요청 목록 (손님은 내 것만, 운영자는 모두)
+    reqDel: null,        // 지우기 확인 중인 요청 번호
+    reqErr: '',
     acct: '', acctErr: '', byeConfirm: false, byePw: ''
   };
 
@@ -190,8 +200,11 @@
   function route() {
     var h = location.hash.replace(/^#\/?/, '');
     var p = h.split('/');
-    if (p[0] === 'sake' && /^\d+$/.test(p[1] || '')) return { name: p[2] === 'rate' ? 'rate' : 'detail', id: +p[1] };
-    if (p[0] === 'admin') return { name: 'admin' };
+    if (p[0] === 'sake' && /^\d+$/.test(p[1] || '')) {
+      return { name: p[2] === 'rate' ? 'rate' : 'detail', id: +p[1], rid: p[2] === 'rate' && /^\d+$/.test(p[3] || '') ? +p[3] : null };
+    }
+    if (p[0] === 'admin') return { name: ({ guests: 'guests', requests: 'requests', backup: 'backup' })[p[1]] || 'admin' };
+    if (p[0] === 'request') return { name: 'request' };
     if (p[0] === 'tasting') return { name: 'tasting' };
     if (p[0] === 'ranking') return { name: 'ranking' };
     if (p[0] === 'osul') return { name: p[1] === 'manage' ? 'osuladmin' : 'osul' };
@@ -203,27 +216,24 @@
   }
 
   /* ---------- 화면: 입장 ---------- */
+  // 로그인 하나로: 운영자도 여기서 아이디 ADMIN으로 로그인해요. 회원가입은 로그인 버튼 아래 버튼으로
   function vAuth() {
-    if (S.showOpLogin) {
-      return topBar('운영자 전용') +
-        '<form class="panel stack" id="opform" novalidate>' +
-        '<div class="field"><label for="oid">운영자 아이디</label><input id="oid" autocomplete="username" autocapitalize="off" spellcheck="false"></div>' +
-        '<div class="field"><label for="opw">비밀번호</label><input id="opw" type="password" autocomplete="current-password"></div>' +
-        (S.authErr ? '<p class="err" role="alert">' + esc(S.authErr) + '</p>' : '') +
-        '<button class="btn" type="submit"' + (S.busy ? ' disabled' : '') + '>운영자 로그인</button></form>' +
-        '<div class="linkrow"><button class="link" data-a="oplogin-toggle">게스트로 들어가기</button></div>';
-    }
     var join = S.authTab === 'join';
+    var err = S.authErr ? '<p class="err" role="alert">' + esc(S.authErr) + '</p>' : '';
+    var fields =
+      '<div class="field"><label for="nick">닉네임</label><input id="nick" maxlength="12" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="' + (join ? '한글 닉네임 (최대 12자)' : '닉네임') + '"></div>' +
+      '<div class="field"><label for="pw">비밀번호</label><input id="pw" type="password" autocomplete="' + (join ? 'new-password' : 'current-password') + '" placeholder="' + (join ? '4자 이상' : '비밀번호') + '"></div>';
+    if (join) {
+      return topBar('기억력 한계를 극복하기 위한 사케 기록장') +
+        '<form class="panel stack" id="authform" novalidate><h2 class="display authtitle">회원가입</h2>' + fields + err +
+        '<button class="btn" type="submit"' + (S.busy ? ' disabled' : '') + '>가입하고 시작하기</button>' +
+        '<p class="tiny" style="margin:0">비밀번호는 찾을 수 없으니 꼭 기억해 주세요.</p></form>' +
+        '<div class="linkrow"><button class="link" data-a="tab" data-t="login">이미 가입했어요 · 로그인</button></div>';
+    }
     return topBar('기억력 한계를 극복하기 위한 사케 기록장') +
-      '<form class="panel stack" id="authform" novalidate><div class="tabs" role="tablist">' +
-      '<button type="button" role="tab" data-a="tab" data-t="login" aria-selected="' + (!join) + '">로그인</button>' +
-      '<button type="button" role="tab" data-a="tab" data-t="join" aria-selected="' + join + '">처음이에요</button></div>' +
-      '<div class="field"><label for="nick">닉네임</label><input id="nick" maxlength="12" autocomplete="username" placeholder="한글 닉네임 (최대 12자)"></div>' +
-      '<div class="field"><label for="pw">비밀번호</label><input id="pw" type="password" autocomplete="' + (join ? 'new-password' : 'current-password') + '" placeholder="4자 이상"></div>' +
-      (S.authErr ? '<p class="err" role="alert">' + esc(S.authErr) + '</p>' : '') +
-      '<button class="btn" type="submit"' + (S.busy ? ' disabled' : '') + '>' + (join ? '가입하고 시작하기' : '로그인') + '</button>' +
-      (join ? '<p class="tiny">비밀번호는 찾을 수 없으니 꼭 기억해 주세요.</p>' : '') + '</form>' +
-      '<div class="linkrow"><button class="link" data-a="oplogin-toggle">운영자 로그인</button></div>';
+      '<form class="panel stack" id="authform" novalidate>' + fields + err +
+      '<button class="btn" type="submit"' + (S.busy ? ' disabled' : '') + '>로그인</button>' +
+      '<button type="button" class="btn ghost" data-a="tab" data-t="join">회원가입</button></form>';
   }
 
   /* ---------- 화면: 목록 (분류·검색·캘린더) ---------- */
@@ -261,10 +271,19 @@
     return by ? list.slice().sort(by) : list;
   }
 
+  // 같은 사케를 여러 번 기록했으면 "2번" 표시
+  function timesChip(s) {
+    return s.times > 1 ? '<span class="chip times num" aria-label="' + s.times + '번 기록">' + s.times + '번</span>' : '';
+  }
+  // 리뷰 날짜: 처음 쓴 날짜 (고쳐도 바뀌지 않아요)
+  function revDate(r) {
+    return '<span class="date num">' + stamp(r.at) + '</span>';
+  }
+
   function card(s) {
     return '<button class="card" data-a="nav" data-h="#/sake/' + s.id + '"><span class="pic">' + pic(s) + '</span><span class="body">' +
       '<span class="tiny">' + esc(s.brewer || ' ') + '</span><h3>' + esc(s.name) + '</h3>' +
-      '<span class="row"><span class="chip ' + (s.rated ? 'done' : '') + '">' + (s.rated ? (s.drank_on ? md(s.drank_on) + ' 마심' : '평가 완료') : '평가 전') + '</span>' +
+      '<span class="row"><span class="chip ' + (s.rated ? 'done' : '') + '">' + (s.rated ? (s.drank_on ? md(s.drank_on) + ' 마심' : '평가 완료') : '평가 전') + '</span>' + timesChip(s) +
       (s.rated && s.stars ? '<span class="mystar num" aria-label="내 별점 ' + s.stars + '점">★ ' + s.stars + '</span>' : '') +
       '<span class="tiny num">' + s.n + '명</span></span></span></button>';
   }
@@ -307,7 +326,8 @@
       '<label class="sortsel"><span class="sr">정렬</span><select id="sort">' + SORTS.map(function (x) {
         return '<option value="' + x[0] + '"' + (F.sort === x[0] ? ' selected' : '') + '>' + x[1] + '</option>';
       }).join('') + '</select></label></div>' +
-      '<div id="results" class="stack" style="gap:10px">' + resultsHtml() + '</div>';
+      '<div id="results" class="stack" style="gap:10px">' + resultsHtml() + '</div>' +
+      '<div class="linkrow"><button class="link" data-a="nav" data-h="#/request">찾는 사케가 없나요? 운영자에게 요청하기 ›</button></div>';
   }
 
   function calView() {
@@ -316,7 +336,11 @@
     var y = +month.slice(0, 4), m = +month.slice(5, 7);
     var first = new Date(y, m - 1, 1), days = new Date(y, m, 0).getDate();
     var byDay = {};
-    S.sakes.forEach(function (s) { if (s.rated && s.drank_on) (byDay[s.drank_on] = byDay[s.drank_on] || []).push(s); });
+    S.sakes.forEach(function (s) {
+      if (!s.rated) return;
+      var ds = s.days && s.days.length ? s.days : (s.drank_on ? [s.drank_on] : []);
+      ds.filter(function (k, i) { return ds.indexOf(k) === i; }).forEach(function (k) { (byDay[k] = byDay[k] || []).push(s); });
+    });
     var monthTotal = 0;
     Object.keys(byDay).forEach(function (k) { if (k.slice(0, 7) === month) monthTotal += byDay[k].length; });
 
@@ -463,29 +487,72 @@
         var t = Math.abs(diff) < 0.5 ? '평균과 비슷해요' : (diff > 0 ? '평균보다 높게 느꼈어요' : '평균보다 낮게 느꼈어요');
         return '<div><b>' + it.n + '</b><span class="t">' + t + '</span><span class="v num"><em class="me">' + my[i] + '</em> / <em class="avg">' + f1(a[i]) + '</em></span></div>';
       }).join('') + '</div>' +
-      '<button class="btn ghost" data-a="nav" data-h="#/sake/' + s.id + '/rate">내 평가 수정</button></div>';
+      '<div class="row2"><button class="btn ghost" data-a="nav" data-h="#/sake/' + s.id + '/rate/' + d.my.id + '">내 평가 수정</button>' +
+      '<button class="btn" data-a="nav" data-h="#/sake/' + s.id + '/rate">다시 마셨어요 · 새 기록</button></div></div>';
+
+    // 내 기록: 같은 사케를 여러 번 마셨으면 모두 보여주고, 하나씩 고치거나 지울 수 있어요
+    var mine = d.mine && d.mine.length ? d.mine : [d.my];
+    h += '<div class="sec"><h2>내 기록 <span class="num muted">' + mine.length + '</span></h2></div><div class="list" id="mylog">' + mine.map(function (m) {
+      var asking = S.delRev === m.id;
+      return '<article class="mylog"><div class="head">' + (m.drank_on ? '<b>' + mdw(m.drank_on) + '</b>' : '<b>날짜 없음</b>') +
+        (m.stars ? starsHtml(m.stars, 'sm') + '<span class="num tiny">' + m.stars + '</span>' : '') + tempChip(m.temp) + '</div>' +
+        '<p>' + (m.t ? esc(m.t) : '<span class="muted">한줄평이 없어요</span>') + '</p>' +
+        '<div class="mlfoot"><span class="tiny">' + revDate(m) + '</span><span class="mlbtns">' +
+        (asking
+          ? '<span class="tiny err">이 기록을 지울까요?</span><button class="btn small ghost" data-a="rev-del-cancel">취소</button><button class="btn small danger" data-a="rev-del" data-id="' + m.id + '">지우기</button>'
+          : '<button class="btn small ghost" data-a="nav" data-h="#/sake/' + s.id + '/rate/' + m.id + '">수정</button><button class="btn small ghost" data-a="rev-del" data-id="' + m.id + '">삭제</button>') +
+        '</span></div></article>';
+    }).join('') + '</div>';
+    h += tasteChange(mine);
 
     h += '<div class="sec"><h2>리뷰 ' + d.reviews.length + '</h2></div><div class="list">' +
       d.reviews.slice().sort(function (x, y) { return (y.mine ? 1 : 0) - (x.mine ? 1 : 0); }).map(function (r) {
         return '<article class="review' + (r.mine ? ' mine' : '') + '"><div class="head"><b>' + esc(r.nick) + '</b>' + badge(r.nick) +
-          (r.mine ? '<span class="chip done">나</span>' : '') + (r.stars ? starsHtml(r.stars, 'sm') : '') + '<span class="date num">' + stamp(r.at) + '</span></div>' +
+          (r.mine ? '<span class="chip done">나</span>' : '') + (r.stars ? starsHtml(r.stars, 'sm') : '') + tempChip(r.temp) + revDate(r) + '</div>' +
           '<p>' + (r.t ? esc(r.t) : '<span class="muted">한줄평이 없어요</span>') + '</p></article>';
       }).join('') + '</div>';
     return h + pagerBottom(nb);
   }
 
+  // 내 맛 변화: 같은 사케를 2번 이상 기록했으면 최근 4개까지 오각형을 겹쳐서 보여줘요 (가장 최근 = 진한 보라)
+  function tasteChange(mine) {
+    if (!mine || mine.length < 2) return '';
+    var list = mine.slice(0, 4).reverse(); // 오래된 것 → 최근
+    var series = list.map(function (m, i) { return { cls: i === list.length - 1 ? 'me' : 'hist h' + (list.length - 2 - i), vals: m.v }; });
+    var legend = list.slice().reverse().map(function (m, i) {
+      var cls = i === 0 ? '' : 'h' + (i - 1);
+      return '<span><i class="' + cls + '"></i>' + (m.drank_on ? md(m.drank_on) : '날짜 없음') + (m.temp ? ' · ' + tempLabel(m.temp) : '') + (i === 0 ? ' (최근)' : '') + '</span>';
+    }).join('');
+    return '<div class="panel stack" id="tastechg"><div class="sec" style="padding:0"><h2>내 맛 변화</h2><span class="tiny num">' +
+      (mine.length > 4 ? '최근 4번' : mine.length + '번') + ' 기록 비교</span></div>' +
+      radar(series) + '<div class="legend wrap">' + legend + '</div></div>';
+  }
+
   /* ---------- 화면: 평가 ---------- */
-  function vRate(id) {
+  function vRate(id, rid) {
     var d = S.detail;
     if (!d || d.sake.id !== id) return topBar() + '<button class="back" data-a="nav" data-h="' + backTo()[0] + '">' + backTo()[1] + '</button><div class="loading">불러오는 중…</div>';
-    if (!S.draft || S.draft.id !== id) {
-      // 오술에서 들어와 처음 평가하면, 마신 날짜 기본값은 그 오술 날짜 (오늘 이후면 오늘)
+    var edit = null;
+    if (rid) {
+      edit = (d.mine || []).filter(function (m) { return m.id === rid; })[0] || null;
+      if (!edit) {
+        return topBar() + '<button class="back" data-a="nav" data-h="#/sake/' + id + '">← ' + esc(d.sake.name) + '</button>' +
+          '<div class="panel center stack"><p class="err">이미 지웠거나 내 기록이 아니에요.</p><button class="btn ghost" data-a="nav" data-h="#/sake/' + id + '">돌아가기</button></div>';
+      }
+    }
+    if (!S.draft || S.draft.id !== id || S.draft.rid !== (rid || null)) {
+      // 오술에서 들어와 새로 기록하면, 마신 날짜 기본값은 그 오술 날짜 (오늘 이후면 오늘)
       var od = S.ctx === 'osul' && S.osul && S.osul.date <= todayStr() ? S.osul.date : todayStr();
-      S.draft = d.my ? { id: id, v: d.my.v.slice(), t: d.my.t, d: d.my.drank_on || todayStr(), s: d.my.stars || 0 } : { id: id, v: [3, 3, 3, 3, 3], t: '', d: od, s: 0 };
+      S.draft = edit ? { id: id, rid: rid, v: edit.v.slice(), t: edit.t, d: edit.drank_on || todayStr(), s: edit.stars || 0, tp: edit.temp || null }
+        : { id: id, rid: null, v: [3, 3, 3, 3, 3], t: '', d: od, s: 0, tp: null };
     }
     var dr = S.draft;
+    var title = edit ? '평가 수정' : (d.rated ? '다시 마신 기록' : '어떤 맛이었나요?');
     var h = topBar() + '<button class="back" data-a="nav" data-h="#/sake/' + id + '">← ' + esc(d.sake.name) + '</button>';
-    h += '<div class="panel stack"><h2 class="display" style="font-size:16px">' + (d.my ? '평가 수정' : '어떤 맛이었나요?') + '</h2><div id="rchart">' + radar([{ cls: 'me', vals: dr.v }]) + '</div></div>';
+    h += '<div class="panel stack"><h2 class="display" style="font-size:16px">' + title + '</h2>' +
+      (edit ? '<p class="tiny" style="margin:-6px 0 0">처음 쓴 날짜(' + stamp(edit.at) + ')는 그대로 남아요.</p>' : '') +
+      (!edit && d.rated ? '<p class="tiny" style="margin:-6px 0 0">예전 기록은 그대로 두고, 새 기록이 하나 더 생겨요.</p>' : '') +
+      '<div id="rchart">' + radar([{ cls: 'me', vals: dr.v }]) + '</div></div>';
     h += '<div class="panel starpick"><div class="l"><b>만족도</b><span id="swd">' + starWord(dr.s) + '</span></div>' +
       '<div class="stars big" role="radiogroup" aria-label="만족도 별점 (반 개 단위)">' + [1, 2, 3, 4, 5].map(function (n) {
         return '<span class="sw"><i class="st' + (dr.s >= n ? ' on' : (dr.s >= n - 0.5 ? ' half' : '')) + '" data-k="' + n + '" aria-hidden="true">★</i>' +
@@ -496,10 +563,16 @@
       '<svg class="dic" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12" rx="2"/><path d="M3 8.5h14M7 3v3M13 3v3"/></svg>' +
       '<input id="drank" type="date" value="' + esc(dr.d) + '" max="' + todayStr() + '" min="2000-01-01"></div>' +
       '<button type="button" class="btn small ghost" data-a="drank-today">오늘</button></div><span class="tiny">"마신 날짜별" 캘린더에 이 날짜로 모여요.</span></div>';
+    h += '<div class="field"><label>마신 온도 <span class="muted" style="font-weight:400">(골라도, 안 골라도 돼요)</span></label>' +
+      '<div class="temps" role="group" aria-label="마신 온도">' + TEMPS.map(function (x) {
+        return '<button type="button" class="tempbtn" data-a="temp" data-t="' + x[0] + '" aria-pressed="' + (dr.tp === x[0]) + '">' + x[1] + '</button>';
+      }).join('') + '</div><span class="tiny">한 번 더 누르면 선택이 풀려요.</span></div>';
+    // 맛 항목은 1~5 버튼: 화면을 쓸어 올릴 때는 눌리지 않고, 톡 눌렀을 때만 바뀌어요 (예전 슬라이드 막대는 스크롤하다 자꾸 바뀌었어요)
     h += '<div class="panel" style="padding-block:6px">' + ITEMS.map(function (it, i) {
       return '<div class="rate"><div class="l"><b>' + it.n + '</b><span id="w' + i + '">' + it.w[dr.v[i] - 1] + '</span></div>' +
-        '<input class="slider" id="sl' + i + '" data-i="' + i + '" type="range" min="1" max="5" step="1" value="' + dr.v[i] + '" aria-label="' + it.n + '" style="--p:' + ((dr.v[i] - 1) * 25) + '%">' +
-        '<div class="ticks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>' +
+        '<div class="scale" id="sc' + i + '" role="radiogroup" aria-label="' + it.n + '">' + [1, 2, 3, 4, 5].map(function (n) {
+          return '<button type="button" class="sv' + (dr.v[i] === n ? ' on' : '') + '" data-a="score" data-i="' + i + '" data-v="' + n + '" role="radio" aria-checked="' + (dr.v[i] === n) + '" aria-label="' + it.n + ' ' + n + '점 · ' + it.w[n - 1] + '">' + n + '</button>';
+        }).join('') + '</div>' +
         '<div class="ends"><span>' + it.lo + '</span><span>' + it.hi + '</span></div></div>';
     }).join('') + '</div>';
     var c = charLen(dr.t);
@@ -604,7 +677,7 @@
 
   function tabbar(r) {
     var cur = r.name === 'home' ? 'home' : r.name === 'ranking' ? 'ranking' : r.name === 'osul' ? 'osul' :
-      (r.name === 'my' || r.name === 'admin' || r.name === 'osuladmin') ? 'my' :
+      (['my', 'admin', 'osuladmin', 'guests', 'requests', 'backup', 'request'].indexOf(r.name) >= 0) ? 'my' :
       ((r.name === 'detail' || r.name === 'rate') && S.ctx === 'osul') ? 'osul' : 'tasting';
     var T = [['home', '#/', '홈'], ['ranking', '#/ranking', '랭킹'], ['osul', '#/osul', '오술'], ['tasting', '#/tasting', '사케'], ['my', '#/my', 'MY']];
     return '<nav class="tabbar" aria-label="메뉴"><div class="tbin">' + T.map(function (x) {
@@ -631,7 +704,7 @@
   /* ---------- 화면: 오술 (오늘 마실 술) ---------- */
   function osulRow(s, i) {
     var status = s.rated
-      ? '<span class="chip done">' + (s.drank_on ? md(s.drank_on) + ' 마심' : '기록 완료') + '</span>' + (s.stars ? '<span class="mystar num" aria-label="내 별점 ' + s.stars + '점">★ ' + s.stars + '</span>' : '')
+      ? '<span class="chip done">' + (s.drank_on ? md(s.drank_on) + ' 마심' : '기록 완료') + '</span>' + timesChip(s) + (s.stars ? '<span class="mystar num" aria-label="내 별점 ' + s.stars + '점">★ ' + s.stars + '</span>' : '')
       : '<span class="chip">기록 전</span>';
     return '<div class="osrow' + (s.rated ? ' done' : '') + '">' +
       '<button class="osmain" data-a="nav" data-h="#/sake/' + s.id + '"><span class="osnum num" aria-label="' + (i + 1) + '번째">' + (i + 1) + '</span>' +
@@ -721,6 +794,15 @@
     h += '<section class="panel lvcard"><p class="hello">' + esc(me.nickname) + (isAdmin() ? ' ' + badge(me.nickname) : '님') +
       ', 지금까지 <b class="num">' + me.count + '병</b> 평가했어요</p>' + lvBlock(me) +
       '<button class="link lvlink" data-a="nav" data-h="#/my">뱃지 ' + me.badges_got + ' / ' + me.badges_total + ' ›</button></section>';
+    if (d.osul && d.osul.items.length) {
+      var oz = d.osul;
+      h += '<section class="panel osulcard" id="homeosul"><div class="sec" style="padding:0"><h2>오늘의 오술</h2><button class="link" data-a="nav" data-h="#/osul">오술 보기 ›</button></div>' +
+        '<p class="tiny" style="margin:0">' + oz.items.length + '병 중 <b class="num">' + oz.done + '병</b> 기록했어요' + (oz.done === oz.items.length ? ' · 모두 기록했어요 🎉' : '') + '</p>' +
+        '<div class="hscroll">' + oz.items.map(function (s, i) {
+          return '<button class="fcard" data-a="nav" data-h="#/sake/' + s.id + '"><span class="pic">' + pic(s) + '<span class="ordtag num">' + (i + 1) + '</span></span>' +
+            '<b>' + esc(s.name) + '</b><span class="tiny">' + (s.rated ? '기록 완료' : '아직 기록 전') + '</span></button>';
+        }).join('') + '</div></section>';
+    }
     if (d.total) {
       h += d.todo
         ? '<button class="todo" data-a="todo"><span>아직 안 마신 사케 <b class="num">' + d.todo + '병</b></span><span class="go">평가하러 가기 ›</span></button>'
@@ -802,7 +884,7 @@
   function myReview(r) {
     return '<button class="mrev" data-a="nav" data-h="#/sake/' + r.sake.id + '"><span class="thumb">' + pic(r.sake) + '</span><span class="t">' +
       '<b>' + esc(r.sake.name) + '</b><span class="mrow">' + (r.stars != null ? starsHtml(r.stars, 'sm') + '<span class="num tiny">' + r.stars + '</span>' : '<span class="tiny">별점 없음</span>') +
-      (r.drank_on ? '<span class="tiny">· ' + md(r.drank_on) + ' 마심</span>' : '') + '</span>' +
+      (r.drank_on ? '<span class="tiny">· ' + md(r.drank_on) + ' 마심</span>' : '') + tempChip(r.temp) + '</span>' +
       (r.comment ? '<span class="cm">' + esc(r.comment) + '</span>' : '') + '</span></button>';
   }
 
@@ -835,6 +917,21 @@
         '</form>');
   }
 
+  // 아이폰 사파리에서 "홈 화면에 추가"하면 앱처럼 쓸 수 있어요 (이미 홈 화면에서 열었으면 안내 안 함)
+  function isIOS() {
+    var ua = navigator.userAgent || '';
+    return /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+  function isStandalone() {
+    return navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  }
+  function iosTip() {
+    if (!isIOS() || isStandalone()) return '';
+    return '<div class="panel iostip"><b>아이폰에서 앱처럼 쓰기</b><ol class="tiny">' +
+      '<li>사파리 아래쪽 <b>공유 버튼</b>(네모에 위쪽 화살표)을 눌러요</li><li><b>"홈 화면에 추가"</b>를 눌러요</li>' +
+      '<li>홈 화면의 사케치북 아이콘으로 열면 주소창 없이 앱처럼 열려요</li></ol></div>';
+  }
+
   function vMy() {
     var h = topBar(), d = S.my;
     if (!d) return h + '<div class="loading">불러오는 중…</div>';
@@ -844,8 +941,14 @@
       '<div><b class="num">' + (d.avg_stars != null ? '★ ' + f1(d.avg_stars) : '—') + '</b><span class="tiny">내가 준 평균 별점</span></div></div></section>';
     if (d.role === 'admin') {
       h += '<button class="menurow panel" data-a="nav" data-h="#/admin"><span>운영자 메뉴 · 사케 등록·관리</span><span class="go">›</span></button>' +
-        '<button class="menurow panel" data-a="nav" data-h="#/osul/manage"><span>오술 관리 · 날짜별 오늘 마실 술 정하기</span><span class="go">›</span></button>';
+        '<button class="menurow panel" data-a="nav" data-h="#/osul/manage"><span>오술 관리 · 날짜별 오늘 마실 술 정하기</span><span class="go">›</span></button>' +
+        '<button class="menurow panel" data-a="nav" data-h="#/admin/requests"><span>사케 요청 · 손님들이 마셔보고 싶은 사케</span><span class="go">›</span></button>' +
+        '<button class="menurow panel" data-a="nav" data-h="#/admin/guests"><span>손님 관리 · 비밀번호 초기화</span><span class="go">›</span></button>' +
+        '<button class="menurow panel" data-a="nav" data-h="#/admin/backup"><span>데이터 백업 · 엑셀로 모두 저장</span><span class="go">›</span></button>';
+    } else {
+      h += '<button class="menurow panel" data-a="nav" data-h="#/request"><span>사케 요청하기 · 마셔보고 싶은 사케 알려주기</span><span class="go">›</span></button>';
     }
+    h += iosTip();
     h += yearReport(d);
     h += '<div class="sec"><h2>뱃지 모음 <span class="num muted">' + d.badges_got + '/' + d.badges_total + '</span></h2></div><div class="badges">' + d.badges.map(badgeTile).join('') + '</div>';
     h += '<div class="sec"><h2>별점이 비슷한 친구</h2></div>';
@@ -869,23 +972,162 @@
   }
 
   function myCsv() {
-    var rows = [['사케', '양조장', '원산지', '마신 날짜', '만족도 별점'].concat(ITEMS.map(function (x) { return x.n; })).concat(['한줄평', '작성일'])];
+    var rows = [['사케', '양조장', '원산지', '마신 날짜', '마신 온도', '만족도 별점'].concat(ITEMS.map(function (x) { return x.n; })).concat(['한줄평', '작성일'])];
     S.my.reviews.forEach(function (r) {
-      rows.push([r.sake.name, r.sake.brewer, r.sake.origin, r.drank_on || '', r.stars == null ? '' : r.stars].concat(r.v || ['', '', '', '', '']).concat([r.comment, stamp(r.at)]));
+      rows.push([r.sake.name, r.sake.brewer, r.sake.origin, r.drank_on || '', tempLabel(r.temp), r.stars == null ? '' : r.stars].concat(r.v || ['', '', '', '', '']).concat([r.comment, stamp(r.at)]));
     });
+    return csvText(rows);
+  }
+  // 엑셀에서 한글이 안 깨지게 BOM을 붙인 CSV
+  function csvText(rows) {
     return '﻿' + rows.map(function (row) {
       return row.map(function (c) { c = String(c == null ? '' : c); return /[",\n\r]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(',');
     }).join('\r\n');
   }
-  function downloadCsv() {
+  function saveFile(name, text, type) {
     try {
-      var url = URL.createObjectURL(new Blob([myCsv()], { type: 'text/csv;charset=utf-8' }));
+      // 안드로이드 앱 안에서는 앱이 다운로드 폴더에 저장해요
+      if (window.SKAPP && typeof window.SKAPP.saveText === 'function') { window.SKAPP.saveText(name, text); return true; }
+      var url = URL.createObjectURL(new Blob([text], { type: type || 'text/csv;charset=utf-8' }));
       var a = document.createElement('a');
-      a.href = url; a.download = '사케치북_' + S.my.nickname + '_' + todayStr() + '.csv';
+      a.href = url; a.download = name;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
-      toast('엑셀에서 열 수 있는 파일로 저장했어요');
-    } catch (e) { toast('이 브라우저에서는 파일 저장이 안 돼요'); }
+      return true;
+    } catch (e) { toast('이 브라우저에서는 파일 저장이 안 돼요'); return false; }
+  }
+  function downloadCsv() {
+    if (saveFile('사케치북_' + S.my.nickname + '_' + todayStr() + '.csv', myCsv())) toast('엑셀에서 열 수 있는 파일로 저장했어요');
+  }
+
+  /* ---------- 화면: 운영자 · 손님 관리 (비밀번호 초기화) ---------- */
+  function vGuests() {
+    var h = topBar(esc(S.me.nickname) + ' ' + badge(S.me.nickname) + ' · 손님 관리') + '<button class="back" data-a="nav" data-h="#/my">← MY</button>';
+    if (S.resetDone) {
+      h += '<div class="panel stack tempbox" role="status"><b>' + esc(S.resetDone.nickname) + '님의 임시 비밀번호</b>' +
+        '<span class="tempw num">' + esc(S.resetDone.temp) + '</span>' +
+        '<p class="tiny" style="margin:0">손님에게 알려 주고, 로그인한 뒤 MY → 비밀번호 변경에서 새 비밀번호로 바꾸라고 안내해 주세요.<br>이 화면을 떠나면 다시 볼 수 없어요.</p>' +
+        '<button class="btn ghost" data-a="reset-ok">확인했어요</button></div>';
+    }
+    if (!S.guests) return h + '<div class="loading">불러오는 중…</div>';
+    h += '<p class="tiny" style="margin:0">비밀번호를 잊은 손님의 비밀번호를 임시 비밀번호로 바꿔요. 리뷰·찜은 그대로 남아요. 로그인이 잠긴 손님도 바로 풀려요.</p>';
+    h += '<div class="sec"><h2>손님 <span class="num muted">' + S.guests.length + '</span></h2></div>';
+    if (!S.guests.length) return h + '<div class="panel muted center">아직 가입한 손님이 없어요.</div>';
+    return h + '<div class="list" id="guestlist">' + S.guests.map(function (g) {
+      var asking = S.resetFor === g.nickname;
+      return '<div class="grow"><span class="t"><b>' + esc(g.nickname) + '</b><span class="tiny">' +
+        (g.created_at ? '가입 ' + md(String(g.created_at).slice(0, 10)) + ' · ' : '') + '리뷰 ' + g.reviews + '개' + (g.last ? ' · 최근 ' + ago(g.last) : '') + '</span></span>' +
+        (asking
+          ? '<span class="mlbtns"><button class="btn small ghost" data-a="reset-cancel">취소</button><button class="btn small danger" data-a="reset-go" data-n="' + esc(g.nickname) + '"' + (S.busy ? ' disabled' : '') + '>초기화</button></span>'
+          : '<button class="btn small ghost" data-a="reset-ask" data-n="' + esc(g.nickname) + '">비밀번호 초기화</button>') + '</div>';
+    }).join('') + '</div>';
+  }
+
+  /* ---------- 화면: 사케 요청 (손님: 요청하기 / 운영자: 모아보기) ---------- */
+  function reqRow(q, admin) {
+    var asking = S.reqDel === q.id;
+    return '<article class="reqrow' + (q.done ? ' done' : '') + '"><div class="head"><b>' + esc(q.name) + '</b>' +
+      '<span class="chip' + (q.done ? ' done' : '') + '">' + (q.done ? '처리됨' : '대기 중') + '</span></div>' +
+      (q.note ? '<p>' + esc(q.note) + '</p>' : '') +
+      '<div class="mlfoot"><span class="tiny">' + (admin ? esc(q.nickname) + badge(q.nickname) + ' · ' : '') + stamp(q.created_at) + '</span><span class="mlbtns">' +
+      (asking
+        ? '<span class="tiny err">지울까요?</span><button class="btn small ghost" data-a="req-del-cancel">취소</button><button class="btn small danger" data-a="req-del" data-id="' + q.id + '">지우기</button>'
+        : (admin ? '<button class="btn small ghost" data-a="req-done" data-id="' + q.id + '" data-d="' + (q.done ? '0' : '1') + '">' + (q.done ? '대기로 되돌리기' : '처리 완료') + '</button>' : '') +
+          '<button class="btn small ghost" data-a="req-del" data-id="' + q.id + '">삭제</button>') +
+      '</span></div></article>';
+  }
+  function vRequest() {
+    var h = topBar() + '<button class="back" data-a="nav" data-h="#/my">← MY</button>';
+    h += '<form class="panel stack" id="reqform" novalidate><h2 class="display authtitle">마셔보고 싶은 사케 요청</h2>' +
+      '<p class="tiny" style="margin:0">운영자에게 알려 주면 다음 오술이나 새 사케 고를 때 참고해요.</p>' +
+      '<div class="field"><label for="rqname">사케 이름</label><input id="rqname" maxlength="80" placeholder="예: 쥬욘다이 혼마루"></div>' +
+      '<div class="field"><label for="rqnote">메모 <span class="muted" style="font-weight:400">(선택, 200자)</span></label><textarea id="rqnote" maxlength="200" placeholder="어디서 들었는지, 왜 마셔보고 싶은지 등"></textarea></div>' +
+      (S.reqErr ? '<p class="err" role="alert">' + esc(S.reqErr) + '</p>' : '') +
+      '<button class="btn" type="submit"' + (S.busy ? ' disabled' : '') + '>요청 보내기</button></form>';
+    h += '<div class="sec"><h2>내 요청 <span class="num muted">' + (S.reqs ? S.reqs.length : '') + '</span></h2></div>';
+    if (!S.reqs) return h + '<div class="loading">불러오는 중…</div>';
+    return h + (S.reqs.length ? '<div class="list" id="reqlist">' + S.reqs.map(function (q) { return reqRow(q, false); }).join('') + '</div>'
+      : '<div class="panel muted center">아직 남긴 요청이 없어요.</div>');
+  }
+  function vRequestsAdmin() {
+    var h = topBar(esc(S.me.nickname) + ' ' + badge(S.me.nickname) + ' · 사케 요청') + '<button class="back" data-a="nav" data-h="#/my">← MY</button>';
+    if (!S.reqs) return h + '<div class="loading">불러오는 중…</div>';
+    var open = S.reqs.filter(function (q) { return !q.done; }), done = S.reqs.filter(function (q) { return q.done; });
+    h += '<div class="sec"><h2>대기 중 <span class="num muted">' + open.length + '</span></h2></div>';
+    h += open.length ? '<div class="list" id="reqlist">' + open.map(function (q) { return reqRow(q, true); }).join('') + '</div>' : '<div class="panel muted center">새 요청이 없어요.</div>';
+    if (done.length) h += '<div class="sec"><h2>처리됨 <span class="num muted">' + done.length + '</span></h2></div><div class="list">' + done.map(function (q) { return reqRow(q, true); }).join('') + '</div>';
+    return h;
+  }
+
+  /* ---------- 화면: 운영자 · 데이터 백업 ---------- */
+  function vBackup() {
+    return topBar(esc(S.me.nickname) + ' ' + badge(S.me.nickname) + ' · 데이터 백업') + '<button class="back" data-a="nav" data-h="#/my">← MY</button>' +
+      '<div class="panel stack"><h2 class="display authtitle">모든 기록을 내 기기에 저장</h2>' +
+      '<p class="tiny" style="margin:0">무료 데이터베이스는 오래 안 쓰면 멈출 수 있어서, 가끔 받아 두면 안심이에요. 비밀번호는 들어가지 않아요.</p>' +
+      '<button class="btn" data-a="backup" data-k="reviews"' + (S.busy ? ' disabled' : '') + '>리뷰 전체 엑셀로 저장</button>' +
+      '<button class="btn ghost" data-a="backup" data-k="sakes"' + (S.busy ? ' disabled' : '') + '>사케 목록 엑셀로 저장</button>' +
+      '<button class="btn ghost" data-a="backup" data-k="json"' + (S.busy ? ' disabled' : '') + '>원본 데이터(JSON) 저장 · 복구용</button></div>';
+  }
+  function backupFiles(kind, d) {
+    var day = todayStr();
+    if (kind === 'json') return ['사케치북_백업_' + day + '.json', JSON.stringify(d, null, 1), 'application/json'];
+    var byId = {};
+    d.sakes.forEach(function (x) { byId[x.id] = x; });
+    if (kind === 'sakes') {
+      var rows = [['번호', '이름', '원료', '정미율', '도수', '주도', '산도', '주조사', '원산지', '설명 제목', '설명', '등록일', '이미지 주소']];
+      d.sakes.slice().sort(function (a, b) { return a.id - b.id; }).forEach(function (x) {
+        rows.push([x.id, x.name, x.rice, x.polish, x.abv, x.smv, x.acid, x.brewer, x.origin, x.desc_title, x.desc_body, stamp(x.created_at), x.img_url || '']);
+      });
+      return ['사케치북_사케목록_' + day + '.csv', csvText(rows)];
+    }
+    var rr = [['리뷰 번호', '사케', '양조장', '원산지', '닉네임', '마신 날짜', '마신 온도', '만족도 별점'].concat(ITEMS.map(function (x) { return x.n; })).concat(['한줄평', '작성일', '고친 날'])];
+    d.ratings.slice().sort(function (a, b) { return a.id - b.id; }).forEach(function (r) {
+      var x = byId[r.sake_id] || {};
+      rr.push([r.id, x.name || '', x.brewer || '', x.origin || '', r.nickname, r.drank_on || '', tempLabel(r.temp), r.stars == null ? '' : r.stars]
+        .concat(r.v || ['', '', '', '', '']).concat([r.comment || '', stamp(r.created_at || r.updated_at), stamp(r.updated_at)]));
+    });
+    return ['사케치북_리뷰전체_' + day + '.csv', csvText(rr)];
+  }
+  function doBackup(kind) {
+    S.busy = true; render();
+    api('/api/admin?what=backup').then(function (d) {
+      S.busy = false; render();
+      var f = backupFiles(kind, d);
+      if (saveFile(f[0], f[1], f[2])) toast('저장했어요: ' + f[0]);
+    }).catch(function (e) { S.busy = false; render(); if (e.status === 401) return handleErr(e); toast(e.message); });
+  }
+  function loadGuests() {
+    return api('/api/admin?what=guests').then(function (d) { S.guests = d.guests; if (route().name === 'guests') render(); }).catch(handleErr);
+  }
+  function loadReqs() {
+    return api('/api/request').then(function (d) { S.reqs = d.requests; if (['request', 'requests'].indexOf(route().name) >= 0) render(); }).catch(handleErr);
+  }
+  function resetPassword(nick) {
+    S.busy = true; render();
+    api('/api/admin', { method: 'POST', body: { action: 'reset', nickname: nick } }).then(function (d) {
+      S.busy = false; S.resetFor = null; S.resetDone = { nickname: d.nickname, temp: d.temp }; render(); window.scrollTo(0, 0);
+    }).catch(function (e) { S.busy = false; S.resetFor = null; if (e.status === 401) return handleErr(e); toast(e.message); render(); });
+  }
+  function submitRequest() {
+    var name = $('rqname').value.trim(), note = $('rqnote').value;
+    if (!name) { S.reqErr = '사케 이름을 입력해 주세요.'; render(); var n0 = $('rqnote'); if (n0) n0.value = note; return; }
+    S.busy = true; S.reqErr = ''; render();
+    api('/api/request', { method: 'POST', body: { name: name, note: note } }).then(function () {
+      S.busy = false; toast('요청을 보냈어요. 운영자가 확인할 거예요'); S.reqs = null; render(); loadReqs();
+    }).catch(function (e) {
+      S.busy = false; if (e.status === 401) return handleErr(e);
+      S.reqErr = e.message; render(); $('rqname').value = name; $('rqnote').value = note;
+    });
+  }
+  function setRequestDone(id, done) {
+    api('/api/request', { method: 'PATCH', body: { id: id, done: done } }).then(function () {
+      (S.reqs || []).forEach(function (q) { if (q.id === id) q.done = done; }); render();
+    }).catch(function (e) { if (e.status === 401) return handleErr(e); toast(e.message); });
+  }
+  function deleteRequest(id) {
+    api('/api/request?id=' + id, { method: 'DELETE' }).then(function () {
+      S.reqDel = null; S.reqs = (S.reqs || []).filter(function (q) { return q.id !== id; }); toast('요청을 지웠어요'); render();
+    }).catch(function (e) { S.reqDel = null; if (e.status === 401) return handleErr(e); toast(e.message); render(); });
   }
   window.SKDEBUG = { csv: function () { return S.my ? myCsv() : ''; } };
 
@@ -895,8 +1137,12 @@
     var app = $('app'), r = route(), html;
     if (!S.me) html = vAuth();
     else if (r.name === 'admin') html = isAdmin() ? vAdmin() : vTasting();
+    else if (r.name === 'guests') html = isAdmin() ? vGuests() : vHome();
+    else if (r.name === 'requests') html = isAdmin() ? vRequestsAdmin() : vRequest();
+    else if (r.name === 'backup') html = isAdmin() ? vBackup() : vHome();
+    else if (r.name === 'request') html = vRequest();
     else if (r.name === 'detail') html = vDetail(r.id);
-    else if (r.name === 'rate') html = vRate(r.id);
+    else if (r.name === 'rate') html = vRate(r.id, r.rid);
     else if (r.name === 'tasting') html = vTasting();
     else if (r.name === 'ranking') html = vRanking();
     else if (r.name === 'osul') html = vOsul();
@@ -1013,12 +1259,13 @@
     S.me = null; S.sakes = null; S.detail = null; S.dcache = {}; S.draft = null; S.home = null; S.my = null; S.rank.data = null;
     S.osul = null; S.osulDate = null; S.oe = null; S.ctx = 'list';
     clearCache();
-    S.form = clone(EMPTY_FORM); S.authErr = ''; S.showOpLogin = false; S.authTab = 'login';
+    S.form = clone(EMPTY_FORM); S.authErr = ''; S.authTab = 'login';
     S.acct = ''; S.acctErr = ''; S.byeConfirm = false; S.byePw = '';
+    S.guests = null; S.resetFor = null; S.resetDone = null; S.reqs = null; S.reqDel = null; S.reqErr = '';
   }
 
   function onRoute() {
-    S.delId = null;
+    S.delId = null; S.delRev = null;
     var r = route();
     if (!S.me) return render();
     if (r.name !== 'detail' && r.name !== 'rate') S.ctx = r.name === 'osul' ? 'osul' : 'list';
@@ -1031,6 +1278,9 @@
       render(); loadOsulManage(S.oe ? S.oe.date : todayStr()); loadSakes();
     }
     else if (r.name === 'my') { S.acct = ''; S.acctErr = ''; S.byeConfirm = false; S.byePw = ''; render(); loadMy(); }
+    else if (r.name === 'guests') { S.resetFor = null; S.resetDone = null; render(); if (isAdmin()) loadGuests(); }
+    else if (r.name === 'requests' || r.name === 'request') { S.reqDel = null; S.reqErr = ''; render(); loadReqs(); }
+    else if (r.name === 'backup') { render(); }
     else {
       if (!S.detail || S.detail.sake.id !== r.id) S.detail = S.dcache[r.id] || null;
       if (r.name === 'detail') S.draft = null;
@@ -1069,7 +1319,7 @@
   function afterLogin(d) {
     var c = readCache(), sameUser = !!(c && c.nick === d.nickname && c.role === d.role);
     S.me = { role: d.role, nickname: d.nickname };
-    S.authErr = ''; S.showOpLogin = false; S.busy = false; S.authTab = 'login';
+    S.authErr = ''; S.busy = false; S.authTab = 'login';
     S.sakes = null; S.detail = null; S.dcache = {}; S.draft = null; S.form = clone(EMPTY_FORM); S.home = null; S.my = null; S.rank.data = null;
     S.osul = null; S.osulDate = null; S.oe = null;
     if (!sameUser) clearCache();
@@ -1084,20 +1334,13 @@
   function submitAuth() {
     var nick = $('nick').value.trim(), pw = $('pw').value;
     if (!nick) { S.authErr = '닉네임을 입력해 주세요.'; return render(); }
-    if (pw.length < 4) { S.authErr = '비밀번호는 4자 이상이에요.'; return render(); }
+    // 4자 규칙은 가입할 때만 (운영자 비밀번호는 Vercel 설정 값이라 길이가 다를 수 있어요)
+    if (!pw) { S.authErr = '비밀번호를 입력해 주세요.'; return render(); }
+    if (S.authTab === 'join' && pw.length < 4) { S.authErr = '비밀번호는 4자 이상이에요.'; return render(); }
     S.busy = true; render();
     api('/api/auth', { method: 'POST', body: { action: S.authTab === 'join' ? 'signup' : 'login', nickname: nick, password: pw } })
       .then(afterLogin)
       .catch(function (e) { S.busy = false; S.authErr = e.message; render(); var n = $('nick'); if (n) n.value = nick; });
-  }
-
-  function submitOp() {
-    var id = $('oid').value.trim(), pw = $('opw').value;
-    if (!id || !pw) { S.authErr = '아이디와 비밀번호를 입력해 주세요.'; return render(); }
-    S.busy = true; render();
-    api('/api/auth', { method: 'POST', body: { action: 'admin', id: id, password: pw } })
-      .then(afterLogin)
-      .catch(function (e) { S.busy = false; S.authErr = e.message; render(); var o = $('oid'); if (o) o.value = id; });
   }
 
   function saveRating() {
@@ -1108,14 +1351,16 @@
     if (dr.d > todayStr()) { er.textContent = '미래 날짜는 고를 수 없어요.'; er.hidden = false; return; }
     if (!(dr.s >= 0.5 && dr.s <= 5)) { er.textContent = '만족도 별점을 골라 주세요.'; er.hidden = false; var sp = document.querySelector('.starpick'); if (sp && sp.scrollIntoView) sp.scrollIntoView({ block: 'center' }); return; }
     S.busy = true; render();
-    api('/api/rate', { method: 'POST', body: { sakeId: id, v: dr.v, comment: dr.t.trim(), drankOn: dr.d, stars: dr.s } })
+    var body = { sakeId: id, v: dr.v, comment: dr.t.trim(), drankOn: dr.d, stars: dr.s, temp: dr.tp || null };
+    if (dr.rid) body.id = dr.rid;
+    api('/api/rate', { method: 'POST', body: body })
       .then(function (res) {
         S.busy = false; S.draft = null; S.detail = null; S.dcache = {}; S.sakes = null; S.home = null; S.my = null; S.rank.data = null;
-        if (S.osul) { var oi = S.osul.items.filter(function (x) { return x.id === id; })[0]; if (oi) { oi.rated = true; oi.stars = dr.s; oi.drank_on = dr.d; } }
+        if (S.osul) { var oi = S.osul.items.filter(function (x) { return x.id === id; })[0]; if (oi) { oi.rated = true; oi.stars = dr.s; oi.drank_on = dr.d; if (!dr.rid) oi.times = (oi.times || 0) + 1; } }
         var parts = [];
         if (res && res.levelUp) parts.push('레벨 업! Lv.' + res.levelUp.lv + ' ' + res.levelUp.title);
         if (res && res.newBadges && res.newBadges.length) parts.push('새 뱃지: ' + res.newBadges.map(function (b) { return b.name; }).join(', '));
-        toast(parts.length ? parts.join(' · ') : '저장했어요. 평균과 리뷰가 열렸어요', parts.length ? 4000 : 2400);
+        toast(parts.length ? parts.join(' · ') : (dr.rid ? '고쳤어요' : '저장했어요. 평균과 리뷰가 열렸어요'), parts.length ? 4000 : 2400);
         go('#/sake/' + id);
       })
       .catch(function (e) {
@@ -1124,6 +1369,23 @@
         render();
         var er2 = $('rateerr'); if (er2) { er2.textContent = e.message; er2.hidden = false; }
       });
+  }
+
+  // 내 기록(리뷰) 하나 지우기. 다 지우면 다시 "평가 전"(블라인드)으로 돌아가요
+  function deleteReview(rid) {
+    var sid = S.detail && S.detail.sake.id;
+    S.busy = true;
+    api('/api/rate?id=' + rid, { method: 'DELETE' }).then(function () {
+      S.busy = false; S.delRev = null;
+      S.detail = null; S.dcache = {}; S.sakes = null; S.home = null; S.my = null; S.rank.data = null; S.osul = null;
+      clearCacheKey('sakes'); clearCacheKey('home'); clearCacheKey('my'); clearCacheKey('rank'); clearCacheKey('osul');
+      toast('기록을 지웠어요');
+      if (sid && route().name === 'detail') { render(); loadDetail(sid); } else onRoute();
+    }).catch(function (e) {
+      S.busy = false; S.delRev = null;
+      if (e.status === 401) return handleErr(e);
+      toast(e.message); render();
+    });
   }
 
   function acctFail(e, keepConfirm) {
@@ -1267,7 +1529,6 @@
     var a = el.getAttribute('data-a');
     if (a === 'nav') { e.preventDefault(); if (el.getAttribute('data-h')) go(el.getAttribute('data-h')); }
     else if (a === 'tab') { S.authTab = el.getAttribute('data-t'); S.authErr = ''; render(); }
-    else if (a === 'oplogin-toggle') { S.showOpLogin = !S.showOpLogin; S.authErr = ''; render(); }
     else if (a === 'logout') {
       api('/api/auth', { method: 'POST', body: { action: 'logout' } }).catch(function () {}).then(function () {
         resetAll();
@@ -1288,6 +1549,12 @@
       if (S.delId === id) deleteSake(id); else { S.delId = id; render(); }
     }
     else if (a === 'del-cancel') { S.delId = null; render(); }
+    else if (a === 'rev-del') {
+      var rv = +el.getAttribute('data-id');
+      if (S.busy) return;
+      if (S.delRev === rv) deleteReview(rv); else { S.delRev = rv; render(); }
+    }
+    else if (a === 'rev-del-cancel') { S.delRev = null; render(); }
     else if (a === 'ftab') { S.F.tab = el.getAttribute('data-t'); render(); }
     else if (a === 'scope') { S.F.scope = el.getAttribute('data-s'); render(); var qi = $('q'); if (qi && S.F.q) qi.focus(); }
     else if (a === 'clearq') { S.F.q = ''; render(); }
@@ -1368,6 +1635,34 @@
       var w = $('swd'); if (w) w.textContent = starWord(sv);
       var er = $('rateerr'); if (er) er.hidden = true;
     }
+    else if (a === 'score') {
+      if (!S.draft) return;
+      var si = +el.getAttribute('data-i'), sv2 = +el.getAttribute('data-v');
+      S.draft.v[si] = sv2;
+      document.querySelectorAll('#sc' + si + ' .sv').forEach(function (b) {
+        var on = +b.getAttribute('data-v') === sv2;
+        b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
+      });
+      $('w' + si).textContent = ITEMS[si].w[sv2 - 1];
+      $('rchart').innerHTML = radar([{ cls: 'me', vals: S.draft.v }]);
+    }
+    else if (a === 'temp') {
+      if (!S.draft) return;
+      var tv = el.getAttribute('data-t');
+      S.draft.tp = S.draft.tp === tv ? null : tv; // 같은 걸 또 누르면 선택 풀기
+      document.querySelectorAll('.temps .tempbtn').forEach(function (tb) { tb.setAttribute('aria-pressed', String(tb.getAttribute('data-t') === S.draft.tp)); });
+    }
+    else if (a === 'reset-ask') { S.resetFor = el.getAttribute('data-n'); render(); }
+    else if (a === 'reset-cancel') { S.resetFor = null; render(); }
+    else if (a === 'reset-go') { if (!S.busy) resetPassword(el.getAttribute('data-n')); }
+    else if (a === 'reset-ok') { S.resetDone = null; render(); }
+    else if (a === 'req-done') { setRequestDone(+el.getAttribute('data-id'), el.getAttribute('data-d') === '1'); }
+    else if (a === 'req-del') {
+      var qid = +el.getAttribute('data-id');
+      if (S.reqDel === qid) deleteRequest(qid); else { S.reqDel = qid; render(); }
+    }
+    else if (a === 'req-del-cancel') { S.reqDel = null; render(); }
+    else if (a === 'backup') { if (!S.busy) doBackup(el.getAttribute('data-k')); }
     else if (a === 'drank-today') { if (S.draft) { setDrank(todayStr()); var di = $('drank'); if (di) di.value = S.draft.d; } }
   });
 
@@ -1375,22 +1670,16 @@
     e.preventDefault();
     if (S.busy) return;
     if (e.target.id === 'authform') submitAuth();
-    else if (e.target.id === 'opform') submitOp();
     else if (e.target.id === 'sakeform') submitSake();
     else if (e.target.id === 'nickform') submitNick();
     else if (e.target.id === 'pwform') submitPw();
+    else if (e.target.id === 'reqform') submitRequest();
     else if (e.target.id === 'byeform') submitBye();
   });
 
   document.addEventListener('input', function (e) {
     var t = e.target;
-    if (t.classList.contains('slider') && S.draft) {
-      var i = +t.getAttribute('data-i'), v = +t.value;
-      S.draft.v[i] = v;
-      t.style.setProperty('--p', ((v - 1) * 25) + '%');
-      $('w' + i).textContent = ITEMS[i].w[v - 1];
-      $('rchart').innerHTML = radar([{ cls: 'me', vals: S.draft.v }]);
-    } else if (t.id === 'cmt' && S.draft) {
+    if (t.id === 'cmt' && S.draft) {
       S.draft.t = t.value;
       var c = charLen(t.value), cnt = $('cnt');
       cnt.textContent = c + ' / 50';

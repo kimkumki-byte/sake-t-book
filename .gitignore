@@ -1,0 +1,8 @@
+node_modules/
+preview/demo.html
+.DS_Store
+Thumbs.db
+.env
+.env.*
+.vercel
+.bkit/

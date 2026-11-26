@@ -65,6 +65,7 @@ h1,h2,h3{margin:0;text-wrap:balance;font-family:var(--f-body)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .stack{display:flex;flex-direction:column;gap:14px}
 .err{color:var(--warn);font-size:13px;margin:0}
+.authtitle{font-size:16px;margin:0}
 .tabs{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line);margin:-4px -16px 0;padding-inline:16px}
 .tabs button{background:none;border:0;padding:8px;font-weight:500;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
 .tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--me)}
@@ -141,6 +142,15 @@ h1,h2,h3{margin:0;text-wrap:balance;font-family:var(--f-body)}
 .scores small{display:block;font-size:11px;color:var(--muted)}
 .scores strong{font-size:14px;font-weight:600}
 .review p{margin:0;font-size:13.5px}
+.chip.times{color:var(--me);border-color:var(--me-soft)}
+/* 내 기록 (같은 사케 여러 번) */
+.mylog{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.mylog .head{display:flex;align-items:center;gap:8px}
+.mylog .head b{font-weight:600;font-size:13.5px}
+.mylog p{margin:0;font-size:13.5px}
+.mlfoot{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.mlfoot .date{color:var(--muted)}
+.mlbtns{display:flex;align-items:center;gap:6px;margin-left:auto}
 
 /* 평가 슬라이더 */
 .rate{display:flex;flex-direction:column;gap:2px;padding:12px 0;border-top:1px solid var(--line)}
@@ -149,14 +159,10 @@ h1,h2,h3{margin:0;text-wrap:balance;font-family:var(--f-body)}
 .rate .l b{font-size:14px;font-weight:600}
 .rate .l span{font-size:12px;font-weight:500;color:var(--me);text-align:right}
 .rate .ends{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);gap:12px}
-.slider{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;--p:50%}
-.slider::-webkit-slider-runnable-track{height:4px;border-radius:99px;background:linear-gradient(to right,var(--me) var(--p),var(--line) var(--p))}
-.slider::-moz-range-track{height:4px;border-radius:99px;background:var(--line)}
-.slider::-moz-range-progress{height:4px;border-radius:99px;background:var(--me)}
-.slider::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:50%;background:var(--me) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 12.5l4 4 8-9' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/14px no-repeat;border:0;margin-top:-10px}
-.slider::-moz-range-thumb{width:24px;height:24px;border-radius:50%;background:var(--me) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 12.5l4 4 8-9' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/14px no-repeat;border:0}
-.ticks{display:flex;justify-content:space-between;padding-inline:10px;margin-top:-8px;height:8px}
-.ticks i{width:4px;height:4px;border-radius:50%;background:var(--me);opacity:.45}
+/* 맛 1~5 버튼 (스크롤할 때 잘못 눌리지 않게 슬라이드 막대 대신) */
+.scale{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:6px 0 4px}
+.scale .sv{height:40px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--muted);font:inherit;font-size:15px;font-weight:600;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.scale .sv.on{background:var(--me);border-color:var(--me);color:var(--me-ink)}
 .sticky{position:sticky;bottom:0;padding-block:10px calc(10px + env(safe-area-inset-bottom,0px));background:linear-gradient(to top,var(--bg) 70%,transparent);display:flex;gap:8px;margin-inline:-4px;padding-inline:4px}
 .count{font-size:12px;color:var(--muted);text-align:right}
 .count.full{color:var(--warn)}
@@ -467,3 +473,38 @@ body.has-tabbar .toast{bottom:calc(84px + env(safe-area-inset-bottom,0px))}
 .oerow .iconbtn.del{color:var(--warn);font-size:17px}
 /* 날짜 칸 아무 데나 눌러도 달력이 열리게: 달력 버튼을 칸 전체로 넓혀요 (앱·미리보기 화면에서도 동작) */
 .datebox input[type=date]::-webkit-calendar-picker-indicator{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;opacity:0;cursor:pointer}
+
+/* ---------- 마신 온도 ---------- */
+.temps{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.tempbtn{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:8px 0;font:inherit;font-size:13px;cursor:pointer}
+.tempbtn[aria-pressed="true"]{background:var(--me);border-color:var(--me);color:var(--me-ink);font-weight:600}
+.chip.tmpc{border-color:transparent;background:var(--surface2);color:var(--muted)}
+
+/* ---------- 내 맛 변화 (기록 겹쳐 보기) ---------- */
+.radar .hist{fill:none;stroke-width:1.5;stroke-linejoin:round}
+.radar .hist.h0{stroke:#e0864a}
+.radar .hist.h1{stroke:#3aa58a}
+.radar .hist.h2{stroke:#9a9aa6;stroke-dasharray:3 3}
+.legend.wrap{flex-wrap:wrap;gap:6px 14px}
+.legend i.h0{border-top-color:#e0864a}
+.legend i.h1{border-top-color:#3aa58a}
+.legend i.h2{border-top:2px dashed #9a9aa6}
+
+/* ---------- 홈: 오늘의 오술 ---------- */
+.osulcard{display:flex;flex-direction:column;gap:8px;border-color:var(--me)}
+.osulcard .hscroll{margin-inline:-4px}
+.ordtag{position:absolute;left:6px;top:6px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--me);color:var(--me-ink);font-size:11px;font-weight:700;display:grid;place-items:center}
+
+/* ---------- 운영자: 손님 관리 · 요청 ---------- */
+.grow{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.grow .t{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.grow .t b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tempbox{border-color:var(--me);align-items:flex-start}
+.tempw{font-size:28px;font-weight:700;letter-spacing:.12em;color:var(--me);user-select:all}
+.reqrow{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.reqrow.done{opacity:.7}
+.reqrow .head{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.reqrow .head b{font-weight:600}
+.reqrow p{margin:0;font-size:13.5px;white-space:pre-line}
+.iostip{display:flex;flex-direction:column;gap:4px}
+.iostip ol{margin:0;padding-left:18px;line-height:1.7}

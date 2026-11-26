@@ -1,0 +1,12 @@
+{
+  "name": "사케치북",
+  "short_name": "사케치북",
+  "description": "기억력 한계를 극복하기 위한 사케 기록장",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "lang": "ko",
+  "icons": [{ "src": "/logo.png", "sizes": "128x128", "type": "image/png", "purpose": "any" }]
+}

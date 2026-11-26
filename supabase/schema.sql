@@ -31,7 +31,7 @@ create table if not exists public.guests (
   created_at timestamptz not null default now()
 );
 
--- 3) 평가 (한 사람이 한 사케에 하나)
+-- 3) 평가 (같은 사케를 여러 번 기록할 수 있어요)
 create table if not exists public.ratings (
   id bigint generated always as identity primary key,
   sake_id bigint not null references public.sakes(id) on delete cascade,
@@ -42,8 +42,8 @@ create table if not exists public.ratings (
   comment text not null default '' check (char_length(comment) <= 50),
   drank_on date not null default ((now() at time zone 'Asia/Seoul')::date),  -- 마신 날짜
   stars numeric(2,1) constraint ratings_stars_check check (stars >= 0.5 and stars <= 5 and stars * 2 = trunc(stars * 2)),  -- 만족도 별점 (0.5~5, 반 개 단위)
-  updated_at timestamptz not null default now(),
-  unique (sake_id, nickname)
+  created_at timestamptz not null default now(),  -- 처음 쓴 시각 (수정해도 그대로)
+  updated_at timestamptz not null default now()   -- 마지막으로 고친 시각
 );
 create index if not exists ratings_sake_idx on public.ratings (sake_id);
 create index if not exists ratings_nick_idx on public.ratings (nickname, drank_on);
@@ -53,6 +53,19 @@ alter table public.ratings add column if not exists stars numeric(2,1);
 alter table public.ratings drop constraint if exists ratings_stars_check;
 alter table public.ratings alter column stars type numeric(2,1);
 alter table public.ratings add constraint ratings_stars_check check (stars >= 0.5 and stars <= 5 and stars * 2 = trunc(stars * 2));
+-- 리뷰 여러 번 + 처음 쓴 날짜 (update-7). 예전 데이터베이스도 이 부분으로 맞춰져요
+alter table public.ratings add column if not exists created_at timestamptz;
+update public.ratings set created_at = updated_at where created_at is null;
+alter table public.ratings alter column created_at set default now();
+alter table public.ratings alter column created_at set not null;
+do $$
+declare c record;
+begin
+  for c in select conname from pg_constraint where conrelid = 'public.ratings'::regclass and contype = 'u' loop
+    execute format('alter table public.ratings drop constraint %I', c.conname);
+  end loop;
+end $$;
+create index if not exists ratings_sake_nick_idx on public.ratings (sake_id, nickname);
 
 -- 3-1) 찜, 닉네임 변경·탈퇴 함수
 create table if not exists public.wishes (
@@ -125,3 +138,60 @@ $$;
 -- 우리 서버(비밀 키)만 실행할 수 있게
 revoke execute on function public.set_osul(date, bigint[]) from public, anon, authenticated;
 grant execute on function public.set_osul(date, bigint[]) to service_role;
+
+-- ===== update-8: 마신 온도, 로그인 시도 제한, 사케 요청 (위의 rename_guest·delete_guest를 최신으로 바꿔요) =====
+
+-- 1) 마신 온도 (비워도 돼요): cold 차갑게 · room 상온 · warm 따뜻하게 · hot 뜨겁게
+alter table public.ratings add column if not exists temp text;
+alter table public.ratings drop constraint if exists ratings_temp_check;
+alter table public.ratings add constraint ratings_temp_check check (temp is null or temp in ('cold', 'room', 'warm', 'hot'));
+
+-- 2) 로그인 시도 제한: 5번 틀리면 10분 잠금 (key = 'g:닉네임소문자' 또는 'admin')
+create table if not exists public.login_fails (
+  key text primary key,
+  fails int not null default 0,
+  locked_until timestamptz,
+  updated_at timestamptz not null default now()
+);
+alter table public.login_fails enable row level security;
+
+-- 3) 사케 요청: 손님이 "이 사케 마셔보고 싶어요"를 운영자에게
+create table if not exists public.requests (
+  id bigint generated always as identity primary key,
+  nickname text not null,
+  name text not null check (char_length(name) between 1 and 80),
+  note text not null default '' check (char_length(note) <= 200),
+  done boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists requests_created_idx on public.requests (created_at desc);
+alter table public.requests enable row level security;
+
+-- 4) 닉네임 바꾸기·탈퇴에 사케 요청·로그인 기록도 함께
+create or replace function public.rename_guest(old_nick text, new_nick text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  update public.guests set nickname = new_nick where nick_key = lower(old_nick);
+  if not found then raise exception 'guest not found'; end if;
+  update public.ratings set nickname = new_nick where nickname = old_nick;
+  update public.wishes set nickname = new_nick where nickname = old_nick;
+  update public.requests set nickname = new_nick where nickname = old_nick;
+  delete from public.login_fails where key = 'g:' || lower(old_nick);
+end;
+$$;
+
+create or replace function public.delete_guest(p_nick text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  delete from public.ratings where nickname = p_nick;
+  delete from public.wishes where nickname = p_nick;
+  delete from public.requests where nickname = p_nick;
+  delete from public.login_fails where key = 'g:' || lower(p_nick);
+  delete from public.guests where nick_key = lower(p_nick);
+end;
+$$;
+
+revoke execute on function public.rename_guest(text, text) from public, anon, authenticated;
+revoke execute on function public.delete_guest(text) from public, anon, authenticated;
+grant execute on function public.rename_guest(text, text) to service_role;
+grant execute on function public.delete_guest(text) to service_role;

@@ -3,6 +3,7 @@
 // GET  ?manage=1&date=…        → 운영자 편성용: 그날의 순서와 편성된 날짜 목록
 // PUT  { date, ids: [사케 번호…] } → 운영자: 그날의 오술을 이 순서로 통째로 저장 (빈 목록이면 비우기)
 const store = require('../lib/store');
+const core = require('../lib/core');
 const v = require('../lib/validate');
 const { HttpError, handler, send } = require('../lib/http');
 const { requireSession, requireAdmin } = require('../lib/auth');
@@ -55,15 +56,18 @@ module.exports = handler(['GET', 'PUT'], async (req, res) => {
   const next = days.find((d) => d > day) || null;
 
   const sakeMap = new Map(sakes.map((s) => [s.id, s]));
-  const counts = {};
-  const mine = {};
+  const people = {}; // 사케별 평가한 사람 수 (여러 번 기록해도 1명)
+  const mine = {};   // 내 가장 최근 기록
+  const times = {};
   ratings.forEach((r) => {
-    counts[r.sake_id] = (counts[r.sake_id] || 0) + 1;
-    if (r.nickname === me.nick) mine[r.sake_id] = r;
+    (people[r.sake_id] = people[r.sake_id] || new Set()).add(r.nickname);
+    if (r.nickname !== me.nick) return;
+    times[r.sake_id] = (times[r.sake_id] || 0) + 1;
+    if (!mine[r.sake_id] || core.byLatest(r, mine[r.sake_id]) < 0) mine[r.sake_id] = r;
   });
   const items = (m.get(day) || []).map((r) => sakeMap.get(r.sake_id)).filter(Boolean).map((s) => ({
     id: s.id, name: s.name, brewer: s.brewer, origin: s.origin, tint: s.tint, img_url: s.img_url,
-    n: counts[s.id] || 0, rated: !!mine[s.id],
+    n: people[s.id] ? people[s.id].size : 0, rated: !!mine[s.id], times: times[s.id] || 0,
     drank_on: mine[s.id] ? mine[s.id].drank_on || null : null,
     stars: mine[s.id] ? (mine[s.id].stars ?? null) : null,
   }));

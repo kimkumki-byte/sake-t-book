@@ -21,7 +21,7 @@ function freshServer() {
   const D = require('../api/[route]');
   const via = (name) => (req, res) => { req.query = { ...(req.query || {}), route: name }; return D(req, res); };
   const X = {};
-  ['me', 'auth', 'sakes', 'sake', 'rate', 'home', 'ranking', 'my', 'wish', 'osul'].forEach((k) => { X[k] = via(k); });
+  ['me', 'auth', 'sakes', 'sake', 'rate', 'home', 'ranking', 'my', 'wish', 'osul', 'admin', 'request'].forEach((k) => { X[k] = via(k); });
   X.dispatch = D;
   return X;
 }
@@ -71,6 +71,15 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   await test('운영자 로그인: 아이디 소문자(admin)는 실패', async () => {
     const r = await call(A.auth, { method: 'POST', body: { action: 'admin', id: 'admin', password: '880825' } });
     assert.equal(r.status, 401);
+  });
+
+  await test('로그인 하나로: 로그인 칸에 ADMIN이면 운영자, admin(소문자)·틀린 비번은 실패', async () => {
+    const r = await call(A.auth, { method: 'POST', body: { action: 'login', nickname: 'ADMIN', password: '880825' } });
+    assert.equal(r.status, 200); assert.equal(r.body.role, 'admin'); assert.equal(r.body.nickname, '아무개');
+    assert.equal((await call(A.me, { cookie: cookieFrom(r) })).body.role, 'admin');
+    assert.equal((await call(A.auth, { method: 'POST', body: { action: 'login', nickname: 'ADMIN', password: '000000' } })).status, 401);
+    assert.equal((await call(A.auth, { method: 'POST', body: { action: 'login', nickname: 'admin', password: '880825' } })).status, 401);
+    assert.equal((await call(A.auth, { method: 'POST', body: { action: 'login', nickname: ' ADMIN ', password: '880825' } })).body.role, 'admin', '앞뒤 띄어쓰기는 무시');
   });
 
   const adm = cookieFrom(await call(A.auth, { method: 'POST', body: { action: 'admin', id: 'ADMIN', password: '880825' } }));
@@ -190,8 +199,9 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   await test('별점: 반 개 단위(0.5~5)만 저장, 0·0.3·2.25·5.5·6·"4"·없음은 거절', async () => {
     const tmp = (await call(A.sakes, { method: 'POST', cookie: adm, body: { name: '반 별 테스트' } })).body.sake.id;
     for (const ok of [0.5, 3.5, 5, 1]) {
-      assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: tmp, v: [3, 3, 3, 3, 3], stars: ok } })).status, 200, String(ok));
-      assert.equal(store._db.ratings.find((r) => r.sake_id === tmp && r.nickname === '민수').stars, ok);
+      const w = await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: tmp, v: [3, 3, 3, 3, 3], stars: ok } });
+      assert.equal(w.status, 200, String(ok));
+      assert.equal(store._db.ratings.find((r) => r.id === w.body.id).stars, ok);
     }
     await call(A.sakes, { method: 'DELETE', cookie: adm, query: { id: String(tmp) } });
     for (const s of [undefined, 0, 0.3, 2.25, 5.5, 6, '4', null]) {
@@ -205,7 +215,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: s.id, v: [3, 3, 3, 3, 3], stars: 5 } });
     await call(A.rate, { method: 'POST', cookie: g2, body: { sakeId: s.id, v: [3, 3, 3, 3, 3], stars: 2 } });
     // 별점 기능 전에 남긴 평가처럼 별점이 없는 평가
-    store._db.ratings.push({ sake_id: s.id, nickname: '옛날손님', v: [3, 3, 3, 3, 3], comment: '', drank_on: '2026-09-01', stars: null, updated_at: '2026-09-01T00:00:00Z' });
+    store._db.ratings.push({ id: 9000, sake_id: s.id, nickname: '옛날손님', v: [3, 3, 3, 3, 3], comment: '', drank_on: '2026-09-01', stars: null, updated_at: '2026-09-01T00:00:00Z' });
     const d = (await call(A.sake, { cookie: g1, query: { id: String(s.id) } })).body;
     assert.equal(d.avg_stars, 3.5); assert.equal(d.stars_n, 2); assert.equal(d.n, 3); assert.equal(d.my.stars, 5);
     const byNick = Object.fromEntries(d.reviews.map((r) => [r.nick, r.stars]));
@@ -215,8 +225,9 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     const l1 = (await call(A.sakes, { cookie: g1 })).body.sakes.find((x) => x.id === s.id);
     const l2 = (await call(A.sakes, { cookie: g2 })).body.sakes.find((x) => x.id === s.id);
     assert.equal(l1.stars, 5); assert.equal(l2.stars, 2);
-    await call(A.rate, { method: 'POST', cookie: g1, body: { sakeId: s.id, v: [3, 3, 3, 3, 3], stars: 3 } });
-    assert.equal((await call(A.sake, { cookie: g1, query: { id: String(s.id) } })).body.my.stars, 3, '다시 평가하면 별점도 수정');
+    const myId = (await call(A.sake, { cookie: g1, query: { id: String(s.id) } })).body.my.id;
+    await call(A.rate, { method: 'POST', cookie: g1, body: { id: myId, sakeId: s.id, v: [3, 3, 3, 3, 3], stars: 3 } });
+    assert.equal((await call(A.sake, { cookie: g1, query: { id: String(s.id) } })).body.my.stars, 3, '리뷰를 고치면 별점도 수정');
     await call(A.sakes, { method: 'DELETE', cookie: adm, query: { id: String(s.id) } });
   });
 
@@ -268,12 +279,61 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     assert.equal(r.body.reviews.length, 2);
     const mine = r.body.reviews.find((x) => x.mine);
     assert.equal(mine.nick, '민수'); assert.equal(mine.t, '깔끔'); assert.ok(mine.at);
-    assert.deepEqual(Object.keys(mine).sort(), ['admin', 'at', 'mine', 'nick', 'stars', 't'], '리뷰에는 맛 점수는 안 나가고 만족도 별점만');
+    assert.deepEqual(Object.keys(mine).sort(), ['admin', 'at', 'id', 'mine', 'nick', 'stars', 't', 'temp'], '리뷰에는 맛 점수는 안 나가고 만족도 별점만');
   });
-  await test('다시 평가하면 새로 쌓이지 않고 수정됨', async () => {
-    await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: dassai, v: [3, 3, 3, 3, 3], comment: '다시 마셔보니 보통' } });
-    const r = await call(A.sake, { cookie: g1, query: { id: String(dassai) } });
-    assert.equal(r.body.n, 2); assert.equal(r.body.my.t, '다시 마셔보니 보통');
+  await test('리뷰 수정: 리뷰 번호로 고치면 새로 쌓이지 않고, 처음 쓴 날짜는 그대로', async () => {
+    const r0 = (await call(A.sake, { cookie: g1, query: { id: String(dassai) } })).body;
+    const myId = r0.my.id, firstAt = r0.my.at;
+    const w = await call(A.rate, { method: 'POST', cookie: g1, body: { id: myId, stars: 4, sakeId: dassai, v: [3, 3, 3, 3, 3], comment: '고쳐 씀' } });
+    assert.equal(w.status, 200); assert.equal(w.body.id, myId);
+    const r = (await call(A.sake, { cookie: g1, query: { id: String(dassai) } })).body;
+    assert.equal(r.n, 2); assert.equal(r.mine.length, 1); assert.equal(r.my.t, '고쳐 씀');
+    assert.equal(r.my.at, firstAt, '고쳐도 처음 쓴 날짜 그대로');
+    const rv = r.reviews.find((x) => x.mine);
+    assert.equal(rv.at, firstAt, '리뷰 목록에도 처음 쓴 날짜');
+  });
+  await test('리뷰 수정: 남의 리뷰·다른 사케의 리뷰 번호·없는 번호는 거절', async () => {
+    const other = store._db.ratings.find((x) => x.nickname === '지은' && x.sake_id === dassai).id;
+    const mine = store._db.ratings.find((x) => x.nickname === '민수' && x.sake_id === dassai).id;
+    const body = { stars: 1, v: [1, 1, 1, 1, 1], comment: '해킹' };
+    assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { ...body, id: other, sakeId: dassai } })).status, 404);
+    assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { ...body, id: mine, sakeId: minus } })).status, 404);
+    assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { ...body, id: 99999, sakeId: dassai } })).status, 404);
+    assert.equal((await call(A.rate, { method: 'POST', cookie: g1, body: { ...body, id: 'abc', sakeId: dassai } })).status, 400);
+    assert.notEqual(store._db.ratings.find((x) => x.id === other).comment, '해킹');
+  });
+  await test('여러 번 리뷰: 같은 사케를 다시 마시면 리뷰가 하나 더 쌓이고, 평균·인원은 사람당 최근 1개', async () => {
+    const before = (await call(A.sake, { cookie: g1, query: { id: String(dassai) } })).body;
+    const w = await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 2, sakeId: dassai, v: [5, 5, 5, 5, 5], comment: '두 번째 잔', drankOn: '2026-11-01' } });
+    assert.equal(w.status, 200); assert.ok(w.body.id);
+    const r = (await call(A.sake, { cookie: g1, query: { id: String(dassai) } })).body;
+    assert.equal(r.mine.length, 2, '내 기록 2개');
+    assert.equal(r.reviews.length, 3, '리뷰 목록에는 모두');
+    assert.equal(r.reviews[0].t, '두 번째 잔', '리뷰 목록은 쓴 순서(최신 먼저)');
+    assert.equal(r.n, 2, '인원은 사람 수');
+    // 첫 리뷰는 오늘 마심, 새 리뷰는 11월 1일 마심 → 가장 최근에 마신 건 첫 리뷰 → 평균은 그대로
+    assert.equal(r.my.id, before.my.id);
+    assert.deepEqual(r.avg, before.avg, '사람당 1표라 평균이 쏠리지 않음');
+    const list = (await call(A.sakes, { cookie: g1 })).body.sakes.find((x) => x.id === dassai);
+    assert.equal(list.times, 2); assert.equal(list.days.length, 2);
+    assert.ok(list.days.includes('2026-11-01'));
+  });
+  await test('여러 번 리뷰: 내 리뷰 삭제 (남의 리뷰는 못 지움), 다 지우면 다시 블라인드', async () => {
+    const s = (await call(A.sakes, { method: 'POST', cookie: adm, body: { name: '삭제 테스트' } })).body.sake;
+    const a = (await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: s.id, v: [3, 3, 3, 3, 3] } })).body.id;
+    const b = (await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 5, sakeId: s.id, v: [3, 3, 3, 3, 3], drankOn: '2026-10-01' } })).body.id;
+    const o = (await call(A.rate, { method: 'POST', cookie: g2, body: { stars: 3, sakeId: s.id, v: [3, 3, 3, 3, 3] } })).body.id;
+    assert.equal((await call(A.rate, { method: 'DELETE', cookie: g1, query: { id: String(o) } })).status, 404, '남의 리뷰');
+    assert.equal((await call(A.rate, { method: 'DELETE', cookie: g1, query: { id: 'x' } })).status, 400);
+    assert.equal((await call(A.rate, { method: 'DELETE', cookie: g1, query: { id: String(a) }, xrw: false })).status, 403, '다른 사이트 요청 차단');
+    assert.equal((await call(A.rate, { method: 'DELETE', cookie: g1, query: { id: String(a) } })).status, 200);
+    let d = (await call(A.sake, { cookie: g1, query: { id: String(s.id) } })).body;
+    assert.equal(d.mine.length, 1); assert.equal(d.my.id, b);
+    assert.equal((await call(A.rate, { method: 'DELETE', cookie: g1, query: { id: String(b) } })).status, 200);
+    d = (await call(A.sake, { cookie: g1, query: { id: String(s.id) } })).body;
+    assert.equal(d.rated, false); assert.equal(d.reviews, null, '내 기록을 다 지우면 다시 블라인드');
+    assert.ok(store._db.ratings.some((x) => x.id === o), '남의 리뷰는 그대로');
+    await call(A.sakes, { method: 'DELETE', cookie: adm, query: { id: String(s.id) } });
   });
   await test('운영자도 평가 가능, 리뷰에 운영자 표시', async () => {
     const w = await call(A.rate, { method: 'POST', cookie: adm, body: { stars: 4, sakeId: dassai, v: [3, 3, 2, 3, 4], comment: '운영자 추천' } });
@@ -296,9 +356,9 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   await test('마신 날짜: 비우면 오늘(한국 시간), 고른 날짜는 그대로 저장', async () => {
     const v = require('../lib/validate');
     const s = (await call(A.sakes, { method: 'POST', cookie: adm, body: { name: '날짜 테스트' } })).body.sake;
-    await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: s.id, v: [3, 3, 3, 3, 3] } });
+    const rid = (await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: s.id, v: [3, 3, 3, 3, 3] } })).body.id;
     assert.equal(store._db.ratings.find((r) => r.sake_id === s.id).drank_on, v.todayKST());
-    await call(A.rate, { method: 'POST', cookie: g1, body: { stars: 4, sakeId: s.id, v: [3, 3, 3, 3, 3], drankOn: '2026-09-15' } });
+    await call(A.rate, { method: 'POST', cookie: g1, body: { id: rid, stars: 4, sakeId: s.id, v: [3, 3, 3, 3, 3], drankOn: '2026-09-15' } });
     assert.equal(store._db.ratings.find((r) => r.sake_id === s.id).drank_on, '2026-09-15');
     const list = (await call(A.sakes, { cookie: g1 })).body.sakes.find((x) => x.id === s.id);
     assert.equal(list.drank_on, '2026-09-15');
@@ -340,7 +400,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
 
   A = freshServer();
   const routes = {};
-  const setRoutes = (X) => { ['me', 'auth', 'sakes', 'sake', 'rate', 'home', 'ranking', 'my', 'wish', 'osul'].forEach((k) => { routes['/api/' + k] = X[k]; }); };
+  const setRoutes = (X) => { ['me', 'auth', 'sakes', 'sake', 'rate', 'home', 'ranking', 'my', 'wish', 'osul', 'admin', 'request'].forEach((k) => { routes['/api/' + k] = X[k]; }); };
   setRoutes(A);
 
   // opts: { storage: 미리 넣어 둘 localStorage, jar: 로그인 쿠키, gate: 이 Promise가 풀릴 때까지 서버 응답을 붙잡아 둠 }
@@ -391,9 +451,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     assert.doesNotMatch(op.text(), /체험용|예시 데이터|민수|1234/);
   });
   await test('[화면] 운영자 로그인 → 첫 화면은 홈, MY의 운영자 메뉴로 관리 화면', async () => {
-    await op.click(op.btn('운영자 로그인'));
-    op.type('#oid', 'ADMIN'); op.type('#opw', '880825');
-    await op.submit('#opform');
+    op.type('#nick', 'ADMIN'); op.type('#pw', '880825'); await op.submit('#authform');
     assert.ok(op.w.location.hash === '#/' || op.w.location.hash === '', '운영자 첫 화면은 홈');
     assert.ok(op.$('.lvcard')); assert.ok(op.$('.tabbar'));
     assert.match(op.text(), /아무개/); assert.ok(op.$('.lvcard .opv'));
@@ -472,11 +530,18 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     await op.tab('사케');
     await op.click(op.$('.card'));
   });
-  await test('[화면] 운영자 평가: 슬라이더·한줄평 → 저장 → 비교 차트와 리뷰(운영자 뱃지)', async () => {
+  await test('[화면] 운영자 평가: 맛 1~5 버튼·한줄평 → 저장 → 비교 차트와 리뷰(운영자 뱃지)', async () => {
     await op.click(op.btn('내 평가 남기기'));
     assert.equal(op.w.location.hash, '#/sake/' + kubota + '/rate');
-    const sl = op.$('#sl0'); sl.value = '1'; sl.dispatchEvent(new op.w.Event('input', { bubbles: true }));
+    assert.equal(op.$$('input[type="range"]').length, 0, '스크롤하다 잘못 바뀌는 슬라이드 막대는 없음');
+    assert.equal(op.$$('.scale').length, 5); assert.equal(op.$$('#sc0 .sv').length, 5);
+    assert.equal(op.$('#sc0 .sv.on').textContent, '3', '처음엔 3');
+    const before = op.$('#rchart').innerHTML;
+    await op.click(op.$('#sc0 [data-v="1"]'));
     assert.equal(op.$('#w0').textContent, '드라이해요');
+    assert.equal(op.$('#sc0 [data-v="1"]').getAttribute('aria-checked'), 'true');
+    assert.equal(op.$$('#sc0 .sv.on').length, 1, '하나만 선택');
+    assert.notEqual(op.$('#rchart').innerHTML, before, '오각형도 바로 바뀜');
     op.type('#cmt', '드라이하고 깔끔');
     assert.equal(op.$('#cnt').textContent, '8 / 50');
     await op.click(op.$('[data-a="star"][data-n="4"]')); await op.click(op.btn('저장하고 결과 보기'));
@@ -491,8 +556,30 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   // 2) 게스트: 가입 → 잠금 → 평가 → 비교
   const gu = browser();
   await gu.settle();
+  await test('[화면] 입장 화면: 로그인 하나 + 아래 회원가입 버튼, 탭·운영자 로그인 링크 없음', async () => {
+    assert.ok(gu.btn('로그인')); assert.ok(gu.btn('회원가입'));
+    assert.ok(!gu.$('.tabs'), '탭 없음'); assert.ok(!gu.btn('운영자 로그인'), '운영자 로그인 링크 없음'); assert.ok(!gu.btn('처음이에요'));
+    await gu.click(gu.btn('회원가입'));
+    assert.match(gu.text(), /회원가입/); assert.ok(gu.btn('가입하고 시작하기'));
+    assert.match(gu.text(), /비밀번호는 찾을 수 없으니/);
+    await gu.click(gu.btn('이미 가입했어요 · 로그인'));
+    assert.ok(gu.btn('로그인')); assert.ok(!gu.btn('가입하고 시작하기'), '로그인 화면으로 돌아옴');
+  });
+  await test('[화면] 로그인은 비밀번호 길이 검사 없이 서버로 (운영자 비번이 짧아도 로그인), 가입만 4자 이상', async () => {
+    gu.type('#nick', 'ADMIN'); gu.type('#pw', '');
+    await gu.submit('#authform');
+    assert.match(gu.text(), /비밀번호를 입력해 주세요/);
+    gu.type('#nick', '없는사람'); gu.type('#pw', 'ab');
+    await gu.submit('#authform'); await new Promise((r) => setTimeout(r, 500)); await gu.settle();
+    assert.match(gu.text(), /닉네임 또는 비밀번호가 맞지 않아요/, '짧은 비번도 서버에서 확인');
+    await gu.click(gu.btn('회원가입'));
+    gu.type('#nick', '짧은이'); gu.type('#pw', 'ab');
+    await gu.submit('#authform');
+    assert.match(gu.text(), /비밀번호는 4자 이상이에요/);
+    await gu.click(gu.btn('이미 가입했어요 · 로그인'));
+  });
   await test('[화면] 게스트 가입 (한글 닉네임) → 목록', async () => {
-    await gu.click(gu.btn('처음이에요'));
+    await gu.click(gu.btn('회원가입'));
     gu.type('#nick', '하늘'); gu.type('#pw', 'sky1');
     await gu.submit('#authform');
     assert.match(gu.text(), /하늘님/); assert.match(gu.text(), /쿠보타 만주 준마이다이긴조/);
@@ -512,7 +599,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   });
   await test('[화면] 게스트 평가 후 평균 비교 + 남의 리뷰 공개', async () => {
     await gu.click(gu.btn('내 평가 남기기'));
-    const sl = gu.$('#sl0'); sl.value = '5'; sl.dispatchEvent(new gu.w.Event('input', { bubbles: true }));
+    await gu.click(gu.$('#sc0 [data-v="5"]'));
     gu.type('#cmt', '<b>달다</b>');
     await gu.click(gu.$('[data-a="star"][data-n="4"]')); await gu.click(gu.btn('저장하고 결과 보기'));
     await gu.settle();
@@ -525,7 +612,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   });
   await test('[화면] 내 평가 수정 → 기존 값이 채워진 상태로 열림', async () => {
     await gu.click(gu.btn('내 평가 수정'));
-    assert.equal(gu.$('#sl0').value, '5'); assert.equal(gu.$('#cmt').value, '<b>달다</b>');
+    assert.equal(gu.$('#sc0 .sv.on').textContent, '5'); assert.equal(gu.$('#cmt').value, '<b>달다</b>');
     await gu.click(gu.btn('취소'));
   });
   await test('[화면] 목록으로 돌아가면 "평가 완료" 표시', async () => {
@@ -542,9 +629,10 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     await gu.submit('#authform');
     assert.match(gu.text(), /하늘님/);
   });
-  await test('[화면] 로그아웃 후 입장 화면은 항상 "로그인" 탭', async () => {
+  await test('[화면] 로그아웃 후 입장 화면은 항상 로그인 (회원가입 화면 아님)', async () => {
     await gu.logout();
-    assert.equal(gu.$('.tabs [aria-selected="true"]').textContent, '로그인');
+    assert.ok(gu.btn('로그인') && gu.btn('회원가입'), '로그인 버튼과 그 아래 회원가입 버튼');
+    assert.ok(!gu.btn('가입하고 시작하기'));
     assert.ok(!gu.$('.tabbar'), '로그아웃하면 하단 메뉴가 없어야 함');
     gu.type('#nick', '하늘'); gu.type('#pw', 'sky1');
     await gu.submit('#authform');
@@ -852,6 +940,56 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       await b.click(b.btn('취소'));
       await b.tab('사케');
     });
+    await test('[여러 번 리뷰] 화면에서 "내 평가 수정"은 새로 쌓이지 않고, 처음 쓴 날짜 그대로, "수정됨" 표시 없음', async () => {
+      const mineRows = () => store._db.ratings.filter((r) => r.sake_id === s5 && r.nickname === '바다');
+      assert.equal(mineRows().length, 1, '두 번 고쳤어도 기록은 1개');
+      const r = mineRows()[0];
+      assert.notEqual(r.created_at, r.updated_at, '고친 시각만 바뀜');
+      await b.click(b.$$('#results .card').find((c) => /야마가타/.test(c.textContent)));
+      assert.equal(b.$$('#mylog .mylog').length, 1);
+      assert.ok(!/수정됨/.test(b.text()), '"수정됨" 표시는 안 보임');
+      assert.match(b.$('.review.mine .date').textContent, /^\d+월 \d+일 \d{2}:\d{2}$/);
+      assert.equal(b.$('.review.mine .date').textContent, ((d) => (d.getMonth() + 1) + '월 ' + d.getDate() + '일 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'))(new Date(r.created_at)), '보이는 날짜는 처음 쓴 날짜');
+    });
+    await test('[여러 번 리뷰] "다시 마셨어요" → 빈 새 기록 → 저장하면 내 기록 2개, 목록 "2번", 캘린더 두 날짜', async () => {
+      await b.click(b.btn('다시 마셨어요 · 새 기록'));
+      assert.match(b.w.location.hash, new RegExp('#/sake/' + s5 + '/rate$'));
+      assert.match(b.text(), /다시 마신 기록/);
+      assert.equal(b.$$('.starpick .st.on').length + b.$$('.starpick .st.half').length, 0, '새 기록은 별점이 비어 있음');
+      const di = b.$('#drank'); di.value = '2026-10-10'; di.dispatchEvent(new b.w.Event('input', { bubbles: true }));
+      await b.click(b.$('[data-a="star"][data-n="5"]'));
+      const cm = b.$('#cmt'); cm.value = '두 번째도 좋음'; cm.dispatchEvent(new b.w.Event('input', { bubbles: true }));
+      await b.click(b.btn('저장하고 결과 보기')); await b.settle();
+      assert.equal(b.w.location.hash, '#/sake/' + s5);
+      assert.equal(b.$$('#mylog .mylog').length, 2, '내 기록 2개');
+      assert.equal(store._db.ratings.filter((r) => r.sake_id === s5 && r.nickname === '바다').length, 2);
+      assert.equal(b.$$('.review.mine').length, 2, '리뷰 목록에도 2개');
+      assert.match(b.$('.satis').textContent, /평균 만족도 \(2명\)/, '평균 인원은 사람 수');
+      await b.tab('사케');
+      const card = b.$$('#results .card').find((c) => /야마가타/.test(c.textContent));
+      assert.match(card.querySelector('.chip.times').textContent, /2번/);
+      await b.click(b.btn('마신 날짜별'));
+      let diff = (new Date().getFullYear() - 2026) * 12 + new Date().getMonth() - 9;
+      while (diff-- > 0) await b.click(b.$('[data-a="month"][data-d="-1"]'));
+      assert.ok(b.$('.day[data-d="2026-10-10"]').classList.contains('has'), '새 기록 날짜도 캘린더에');
+      await b.click(b.btn('오늘로'));
+      await b.click(b.btn('목록'));
+    });
+    await test('[여러 번 리뷰] 내 기록 삭제는 두 단계 (삭제 → 지우기), 취소 가능', async () => {
+      await b.click(b.$$('#results .card').find((c) => /야마가타/.test(c.textContent)));
+      const first = b.$$('#mylog .mylog').find((x) => /두 번째도 좋음/.test(x.textContent));
+      await b.click([...first.querySelectorAll('button')].find((x) => x.textContent === '삭제'));
+      assert.match(b.$('#mylog').textContent, /이 기록을 지울까요\?/);
+      await b.click(b.btn('취소'));
+      assert.equal(b.$$('#mylog .mylog').length, 2, '취소하면 그대로');
+      const again = b.$$('#mylog .mylog').find((x) => /두 번째도 좋음/.test(x.textContent));
+      await b.click([...again.querySelectorAll('button')].find((x) => x.textContent === '삭제'));
+      await b.click(b.btn('지우기')); await b.settle(); await b.settle();
+      assert.equal(b.$$('#mylog .mylog').length, 1);
+      assert.equal(store._db.ratings.filter((r) => r.sake_id === s5 && r.nickname === '바다').length, 1);
+      assert.ok(!/두 번째도 좋음/.test(b.text()));
+      await b.tab('사케');
+    });
     await test('[이전/다음] 목록 순서대로 이동, 처음·마지막 표시, 위쪽 작은 버튼도 동작', async () => {
       const sel = b.$('#sort'); sel.value = 'name'; sel.dispatchEvent(new b.w.Event('change', { bubbles: true })); await b.settle();
       const order = names();
@@ -887,8 +1025,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     });
     await test('[관리] 운영자 목록 검색', async () => {
       const o = browser(); await o.settle();
-      await o.click(o.btn('운영자 로그인'));
-      o.type('#oid', 'ADMIN'); o.type('#opw', '880825'); await o.submit('#opform');
+      o.type('#nick', 'ADMIN'); o.type('#pw', '880825'); await o.submit('#authform');
       await o.toAdmin();
       const q = o.$('#aq'); q.value = '핫카이'; q.dispatchEvent(new o.w.Event('input', { bubbles: true })); await o.settle();
       assert.deepEqual(o.$$('#alist .oprow b').map((x) => x.textContent), ['핫카이산 특별본양조']);
@@ -897,8 +1034,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     });
     await test('[관리] 등록·수정 폼에 술 설명 제목/본문 칸, 저장하면 반영', async () => {
       const o = browser(); await o.settle();
-      await o.click(o.btn('운영자 로그인'));
-      o.type('#oid', 'ADMIN'); o.type('#opw', '880825'); await o.submit('#opform');
+      o.type('#nick', 'ADMIN'); o.type('#pw', '880825'); await o.submit('#authform');
       await o.toAdmin();
       assert.ok(o.$('#odt')); assert.equal(o.$('#odb').tagName, 'TEXTAREA');
       assert.equal(o.$('#odt').maxLength, 40); assert.equal(o.$('#odb').maxLength, 1000);
@@ -976,7 +1112,8 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
   });
   await test('[랭킹] 별점 평균순, 마신 날짜 기준, 별점 없는 평가·평가 없는 사케 제외, 동점은 인원 많은 순', async () => {
     const sakes = [1, 2, 3, 4].map((id) => ({ id, name: '사케' + id }));
-    const R = (sid, stars, d) => ({ sake_id: sid, stars, drank_on: d });
+    let who = 0;
+    const R = (sid, stars, d) => ({ sake_id: sid, stars, drank_on: d, nickname: 'p' + (++who) });
     const ratings = [R(1, 4, '2026-10-06'), R(1, 5, '2026-10-07'), R(2, 4.5, '2026-10-06'), R(2, 4.5, '2026-10-05'), R(3, 4.5, '2026-10-06'),
       R(4, null, '2026-10-06'), R(3, 1, '2026-09-30')];
     const wk = core.ranking(sakes, ratings, '2026-10-05', '2026-10-11');
@@ -985,6 +1122,35 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     const all = core.ranking(sakes, ratings, null, null);
     assert.equal(all.find((x) => x.id === 3).avg, 2.75, '전체 기간은 지난 평가까지');
     assert.deepEqual(core.ranking(sakes, ratings, '2026-08-01', '2026-08-31'), [], '평가 없는 기간은 빈 목록');
+  });
+  await test('[랭킹] 한 사람이 같은 사케를 여러 번 기록하면 가장 최근 리뷰 1표만 (기간 안에서)', async () => {
+    const sakes = [{ id: 1, name: '가' }, { id: 2, name: '나' }];
+    const R = (n, sid, stars, d, id) => ({ id, nickname: n, sake_id: sid, stars, drank_on: d });
+    const ratings = [R('a', 1, 5, '2026-10-01', 1), R('a', 1, 5, '2026-10-02', 2), R('a', 1, 1, '2026-10-09', 3), R('b', 1, 4, '2026-10-01', 4),
+      R('a', 2, 4, '2026-10-01', 5)];
+    const all = core.ranking(sakes, ratings, null, null);
+    assert.deepEqual(all.find((x) => x.id === 1), { id: 1, name: '가', brewer: '', origin: '', img_url: null, tint: undefined, avg: 2.5, n: 2, rank: 2 }, 'a는 최근 별점 1, b는 4 → 2.5, 2명');
+    const wk = core.ranking(sakes, ratings, '2026-09-28', '2026-10-04');
+    assert.equal(wk.find((x) => x.id === 1).avg, 4.5, '그 주 안에서는 a의 최근(10/2) 5점 + b 4점');
+    assert.equal(wk.find((x) => x.id === 1).n, 2);
+  });
+  await test('[레벨·뱃지] 레벨은 리뷰 수, 사케 정보 뱃지는 서로 다른 사케로 (같은 사케 여러 번은 1병)', async () => {
+    const sakes = [{ id: 1, name: '가', brewer: '아사히', origin: '니가타', polish: '45', smv: '+6' }];
+    const R = (id, d, stars) => ({ id, nickname: 'me', sake_id: 1, stars, drank_on: d, comment: '' });
+    const p = core.profile('me', sakes, [R(1, '2026-10-03', 5), R(2, '2026-10-03', 4), R(3, '2026-10-04', 2)]);
+    assert.equal(p.count, 3); assert.equal(p.sakes, 1); assert.equal(p.level.title, '누룩', '리뷰 3개 → 누룩');
+    const got = (id) => p.badges.find((b) => b.id === id);
+    assert.equal(got('regular3').cur, 1, '같은 양조장 3병: 같은 사케는 1병');
+    assert.equal(got('session3').cur, 1, '같은 날 3병: 같은 사케는 1병');
+    assert.equal(got('pioneer3').cur, 1, '개척자: 사케당 한 번');
+    assert.equal(got('weekend5').cur, 3, '주말 한 잔: 마신 횟수');
+    assert.equal(got('perfect').got, true);
+  });
+  await test('[친구] 같은 사케를 여러 번 기록하면 가장 최근 별점으로 비교', async () => {
+    const R = (n, sid, s, d, id) => ({ id, nickname: n, sake_id: sid, stars: s, drank_on: d });
+    const ratings = [R('me', 1, 1, '2026-10-01', 1), R('me', 1, 5, '2026-10-05', 2), R('me', 2, 3, '2026-10-01', 3),
+      R('A', 1, 5, '2026-10-01', 4), R('A', 2, 3, '2026-10-01', 5)];
+    assert.deepEqual(core.similarFriends('me', ratings, '', 3).map((x) => [x.nick, x.common, x.match]), [['A', 2, 100]]);
   });
   await test('[친구] 별점이 비슷한 순, 함께 별점 준 사케 2병 이상만, 일치도 %', async () => {
     const R = (n, sid, s) => ({ nickname: n, sake_id: sid, stars: s });
@@ -1029,10 +1195,10 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.deepEqual(Object.keys(d.feed[0].sake).sort(), ['id', 'name']);
       assert.equal((await call(A.home, { cookie: h2 })).body.feed.length, 0, '내 평가는 친구 소식에 안 나옴');
     });
-    await test('[API 평가] 첫 평가 → 새 뱃지 "첫 잔", 3병째 → 레벨 업 "누룩", 같은 사케 다시 평가는 안 셈', async () => {
+    await test('[API 평가] 첫 평가 → 새 뱃지 "첫 잔", 3병째 → 레벨 업 "누룩", 리뷰 고치기는 안 셈', async () => {
       const a = (await rate(h1, k1, 5)).body;
       assert.deepEqual(a.newBadges.map((b) => b.name), ['첫 잔', '만점 선언']); assert.equal(a.levelUp, null);
-      const b = (await rate(h1, k1, 4.5)).body;
+      const b = (await rate(h1, k1, 4.5, { id: a.id })).body;
       assert.deepEqual(b.newBadges, []); assert.equal(b.levelUp, null);
       await rate(h1, k2, 4);
       const c = (await rate(h1, k3, 3, { comment: '쉼표, "따옴표"' })).body;
@@ -1130,7 +1296,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     await rate(sc, q1, 5); await rate(sc, q2, 3.5); await rate(sc, q3, 4);
 
     const u = browser(); await u.settle();
-    await u.click(u.btn('처음이에요')); u.type('#nick', '바람'); u.type('#pw', 'wind1'); await u.submit('#authform');
+    await u.click(u.btn('회원가입')); u.type('#nick', '바람'); u.type('#pw', 'wind1'); await u.submit('#authform');
     await u.settle();
 
     await test('[하단 메뉴] 홈·랭킹·오술·사케·MY, 지금 메뉴 표시', async () => {
@@ -1241,7 +1407,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       const csv = u.w.SKDEBUG.csv();
       assert.equal(csv.charCodeAt(0), 0xfeff);
       const lines = csv.slice(1).split('\r\n');
-      assert.equal(lines[0], '사케,양조장,원산지,마신 날짜,만족도 별점,단맛,산미,바디감,알콜감,여운,한줄평,작성일');
+      assert.equal(lines[0], '사케,양조장,원산지,마신 날짜,마신 온도,만족도 별점,단맛,산미,바디감,알콜감,여운,한줄평,작성일');
       assert.equal(lines.length, 3);
       const dl = lines.find((l) => l.startsWith('닷사이 45'));
       assert.ok(dl.includes(',4.5,'));
@@ -1294,8 +1460,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     });
     await test('[MY 운영자] 운영자 메뉴 링크, 계정 변경 대신 안내', async () => {
       const o = browser(); await o.settle();
-      await o.click(o.btn('운영자 로그인'));
-      o.type('#oid', 'ADMIN'); o.type('#opw', '880825'); await o.submit('#opform');
+      o.type('#nick', 'ADMIN'); o.type('#pw', '880825'); await o.submit('#authform');
       await o.tab('MY'); await o.settle();
       assert.ok(o.$('[data-h="#/admin"]'));
       assert.match(o.text(), /Vercel 설정/);
@@ -1313,8 +1478,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     const osGu = browser(); await osGu.settle();
     let osIds = [];
     await test('[오술 화면] 운영자: MY → 오술 관리 → 사케 추가·순서 바꾸기·저장', async () => {
-      await osOp.click(osOp.btn('운영자 로그인'));
-      osOp.type('#oid', 'ADMIN'); osOp.type('#opw', '880825'); await osOp.submit('#opform');
+      osOp.type('#nick', 'ADMIN'); osOp.type('#pw', '880825'); await osOp.submit('#authform');
       await osOp.tab('MY'); await osOp.settle();
       assert.ok(osOp.$('[data-h="#/osul/manage"]'), 'MY에 오술 관리');
       await osOp.click(osOp.$('[data-h="#/osul/manage"]')); await osOp.settle(); await osOp.settle();
@@ -1346,7 +1510,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.deepEqual(osOp.errors, []);
     });
     await test('[오술 화면] 손님: 하단 메뉴 오술 → 그날 사케만 정한 순서로, 오술 관리 메뉴는 없음', async () => {
-      await osGu.click(osGu.btn('처음이에요')); osGu.type('#nick', '오술러'); osGu.type('#pw', 'osul2'); await osGu.submit('#authform');
+      await osGu.click(osGu.btn('회원가입')); osGu.type('#nick', '오술러'); osGu.type('#pw', 'osul2'); await osGu.submit('#authform');
       await osGu.tab('오술'); await osGu.settle();
       assert.equal(osGu.w.location.hash, '#/osul');
       assert.equal(osGu.$('.tabbar .tb.on').textContent.trim(), '오술');
@@ -1396,7 +1560,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const fast = browser(); await fast.settle();
     await test('[속도] 로그인 후 잠시 뒤 다른 탭 데이터를 미리 받아 둠 → 탭을 누르면 바로 보임', async () => {
-      await fast.click(fast.btn('처음이에요')); fast.type('#nick', '빠른손님'); fast.type('#pw', 'fast1'); await fast.submit('#authform');
+      await fast.click(fast.btn('회원가입')); fast.type('#nick', '빠른손님'); fast.type('#pw', 'fast1'); await fast.submit('#authform');
       await wait(900); await fast.settle();
       ['/api/home', '/api/sakes', '/api/ranking?period=all&offset=0', '/api/my'].forEach((u) => assert.ok(fast.calls.includes(u), u + ' 미리 받기'));
       // 탭을 누르는 순간(서버 응답 전)에도 '불러오는 중'이 아니라 내용이 보여야 함
@@ -1449,7 +1613,7 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
     });
     await test('[속도] 한 번 본 사케 상세는 다시 열 때 바로 보임', async () => {
       const b = browser(); await b.settle();
-      await b.click(b.btn('처음이에요')); b.type('#nick', '상세손님'); b.type('#pw', 'look1'); await b.submit('#authform');
+      await b.click(b.btn('회원가입')); b.type('#nick', '상세손님'); b.type('#pw', 'look1'); await b.submit('#authform');
       const id = store._db.sakes[0].id;
       b.w.location.hash = '#/sake/' + id; await b.settle(); await b.settle();
       assert.ok(b.$('.hero'));
@@ -1636,12 +1800,39 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       await assert.rejects(S.renameGuest('가', '나'), (e) => e.code === 'DUP');
       reply = { status: 400, body: JSON.stringify({ code: '22P02', message: 'bad' }) };
       await assert.rejects(S.listSakes(), (e) => e.code === '22P02' && e.message === 'bad');
-      reply = { status: 201, body: '' };
+      // 새 리뷰: 같은 사케라도 덮어쓰지 않고 새로 추가, 처음 쓴 시각 = 고친 시각
+      reply = { status: 201, body: JSON.stringify({ id: 77 }) };
       log.length = 0;
-      await S.upsertRating({ sake_id: 3, nickname: '가', v: [1, 2, 3, 4, 5], comment: '', drank_on: null, stars: 4 });
-      assert.equal(log[0].url, 'https://db.test/rest/v1/ratings?on_conflict=sake_id%2Cnickname');
-      assert.equal(log[0].init.headers.Prefer, 'resolution=merge-duplicates');
-      assert.equal(JSON.parse(log[0].init.body).stars, 4);
+      assert.equal(await S.insertRating({ sake_id: 3, nickname: '가', v: [1, 2, 3, 4, 5], comment: '', drank_on: null, stars: 4 }), 77);
+      assert.equal(log[0].url, 'https://db.test/rest/v1/ratings?select=id');
+      assert.equal(log[0].init.method, 'POST');
+      assert.doesNotMatch(log[0].url, /on_conflict/);
+      const ins = JSON.parse(log[0].init.body);
+      assert.equal(ins.stars, 4); assert.ok(ins.created_at); assert.equal(ins.created_at, ins.updated_at);
+      // 리뷰 고치기: 번호 + 내 닉네임으로만, 처음 쓴 시각은 보내지 않음
+      reply = { status: 200, body: JSON.stringify([{ id: 77, stars: '3.5' }]) };
+      log.length = 0;
+      assert.equal((await S.updateRating(77, '가', { v: [1, 1, 1, 1, 1], comment: 'x', drank_on: '2026-10-01', stars: 3.5 })).stars, 3.5);
+      assert.equal(log[0].init.method, 'PATCH');
+      assert.match(log[0].url, /ratings\?id=eq\.77&nickname=eq\.%EA%B0%80&select=/);
+      assert.equal(JSON.parse(log[0].init.body).created_at, undefined);
+      reply = { status: 200, body: '[]' };
+      assert.equal(await S.updateRating(78, '가', { v: [1, 1, 1, 1, 1], comment: '', drank_on: null, stars: 1 }), null);
+      // 리뷰 지우기: 번호 + 내 닉네임
+      reply = { status: 200, body: JSON.stringify([{ id: 77 }]) };
+      log.length = 0;
+      assert.equal(await S.deleteRating(77, '가'), 1);
+      assert.equal(log[0].init.method, 'DELETE');
+      assert.match(log[0].url, /ratings\?id=eq\.77&nickname=eq\.%EA%B0%80/);
+      // 평가 1000개 넘으면 나눠서 끝까지 받음 (Supabase 한 번 최대 1000줄)
+      const page = (n, from) => JSON.stringify(Array.from({ length: n }, (_, i) => ({ id: from + i, stars: null })));
+      const pages = [page(1000, 1), page(1000, 1001), page(5, 2001)];
+      log.length = 0;
+      global.fetch = async (url, init) => { log.push({ url, init }); const b = pages.shift(); return { ok: true, status: 200, text: async () => b }; };
+      assert.equal((await S.allRatings()).length, 2005);
+      assert.equal(log.length, 3);
+      assert.match(log[0].url, /limit=1000&offset=0/); assert.match(log[2].url, /limit=1000&offset=2000/);
+      global.fetch = async (url, init) => { log.push({ url, init }); return { ok: reply.status < 400, status: reply.status, text: async () => reply.body }; };
       reply = { status: 200, body: '{}' };
       const url = await S.uploadImage(Buffer.from('x'), 'image/png');
       assert.match(url, /^https:\/\/db\.test\/storage\/v1\/object\/public\/sake-images\/\d+-[0-9a-f]{10}\.png$/);
@@ -1663,6 +1854,271 @@ const PNG = 'data:image/png;base64,' + Buffer.from('fakepng').toString('base64')
       assert.doesNotMatch(t, /require\('(@supabase\/supabase-js|jsonwebtoken)'\)/, d + '/' + f);
     }));
   });
+
+  /* ================= 추가 기능: 온도·로그인 잠금·비번 초기화·백업·사케 요청·홈 오술 ================= */
+  {
+    const X = freshServer();
+    const v = require('../lib/validate');
+    const TODAY = v.todayKST();
+    const adm = cookieFrom(await call(X.auth, { method: 'POST', body: { action: 'login', nickname: 'ADMIN', password: '880825' } }));
+    const sid = (await call(X.sakes, { method: 'POST', cookie: adm, body: { name: '온도 테스트', brewer: '가양조' } })).body.sake.id;
+    const sid2 = (await call(X.sakes, { method: 'POST', cookie: adm, body: { name: '두 번째 술' } })).body.sake.id;
+    const signup = async (n, pw) => cookieFrom(await call(X.auth, { method: 'POST', body: { action: 'signup', nickname: n, password: pw } }));
+    const gA = await signup('가을', 'fall1');
+    const gB = await signup('겨울', 'wint1');
+    const login = (n, pw) => call(X.auth, { method: 'POST', body: { action: 'login', nickname: n, password: pw } });
+
+    await test('[온도] 마신 온도 저장(비워도 됨), 잘못된 값 거절, 상세·리뷰·MY에 보임, 고치면 바뀜', async () => {
+      const base = { sakeId: sid, v: [3, 3, 3, 3, 3], stars: 4 };
+      const w = await call(X.rate, { method: 'POST', cookie: gA, body: { ...base, temp: 'warm' } });
+      assert.equal(w.status, 200);
+      assert.equal(store._db.ratings.find((r) => r.id === w.body.id).temp, 'warm');
+      const n = await call(X.rate, { method: 'POST', cookie: gA, body: { ...base, drankOn: '2026-10-01' } });
+      assert.equal(store._db.ratings.find((r) => r.id === n.body.id).temp, null, '안 고르면 비어 있음');
+      for (const bad of ['ice', 'COLD', 3, true]) {
+        assert.equal((await call(X.rate, { method: 'POST', cookie: gA, body: { ...base, temp: bad } })).status, 400, String(bad));
+      }
+      const d = (await call(X.sake, { cookie: gA, query: { id: String(sid) } })).body;
+      assert.equal(d.mine.find((m) => m.id === w.body.id).temp, 'warm');
+      assert.equal(d.reviews.find((r) => r.id === w.body.id).temp, 'warm');
+      assert.equal((await call(X.my, { cookie: gA })).body.reviews.find((r) => r.id === w.body.id).temp, 'warm');
+      await call(X.rate, { method: 'POST', cookie: gA, body: { ...base, id: w.body.id, temp: 'cold' } });
+      assert.equal(store._db.ratings.find((r) => r.id === w.body.id).temp, 'cold');
+    });
+
+    await test('[로그인 잠금] 5번 틀리면 10분 잠금 (맞는 비번도 막힘), 성공하면 횟수 초기화, 다른 계정은 영향 없음', async () => {
+      for (let i = 0; i < 4; i++) assert.equal((await login('겨울', 'xxxx')).status, 401, '틀림 ' + (i + 1));
+      assert.equal((await login('겨울', 'wint1')).status, 200, '4번 틀려도 맞으면 들어가짐');
+      assert.equal(store._db.fails['g:겨울'], undefined, '성공하면 횟수 초기화');
+      for (let i = 0; i < 4; i++) await login('겨울', 'xxxx');
+      const fifth = await login('겨울', 'xxxx');
+      assert.equal(fifth.status, 429); assert.match(fifth.body.error, /10분/);
+      const locked = await login('겨울', 'wint1');
+      assert.equal(locked.status, 429, '잠긴 동안엔 맞는 비번도 막힘'); assert.match(locked.body.error, /분 뒤에 다시/);
+      assert.equal((await login('가을', 'fall1')).status, 200, '다른 계정은 그대로');
+      // 10분이 지나면 풀려요
+      store._db.fails['g:겨울'].locked_until = new Date(Date.now() - 1000).toISOString();
+      assert.equal((await login('겨울', 'wint1')).status, 200, '잠금이 끝나면 다시 로그인');
+    });
+    await test('[로그인 잠금] 닉네임 대소문자가 달라도 같은 계정으로 셈, 운영자도 5번 틀리면 잠금', async () => {
+      await signup('Kim', 'kim11');
+      for (let i = 0; i < 3; i++) await login('kim', 'zzzz');
+      for (let i = 0; i < 2; i++) await login('KIM', 'zzzz');
+      assert.equal((await login('Kim', 'kim11')).status, 429);
+      for (let i = 0; i < 5; i++) await login('ADMIN', 'nope');
+      assert.equal((await login('ADMIN', '880825')).status, 429, '운영자도 잠금');
+      delete store._db.fails.admin;
+      assert.equal((await login('ADMIN', '880825')).status, 200);
+    });
+
+    await test('[비번 초기화] 운영자만: 임시 비밀번호로 바뀌고 잠금도 풀림, 예전 비번은 안 됨', async () => {
+      assert.equal((await call(X.admin, { method: 'POST', cookie: gA, body: { action: 'reset', nickname: '겨울' } })).status, 403);
+      assert.equal((await call(X.admin, { method: 'POST', body: { action: 'reset', nickname: '겨울' } })).status, 401);
+      assert.equal((await call(X.admin, { method: 'POST', cookie: adm, body: { action: 'reset', nickname: '없는손님' } })).status, 404);
+      assert.equal((await call(X.admin, { method: 'POST', cookie: adm, xrw: false, body: { action: 'reset', nickname: '겨울' } })).status, 403, '다른 사이트 요청 차단');
+      for (let i = 0; i < 5; i++) await login('겨울', 'xxxx');
+      const r = await call(X.admin, { method: 'POST', cookie: adm, body: { action: 'reset', nickname: '겨울' } });
+      assert.equal(r.status, 200); assert.equal(r.body.nickname, '겨울');
+      assert.match(r.body.temp, /^[a-z2-9]{6}$/); assert.doesNotMatch(r.body.temp, /[01loi]/, '헷갈리는 글자 없음');
+      assert.equal((await login('겨울', 'wint1')).status, 401, '예전 비번은 안 됨');
+      assert.equal((await login('겨울', r.body.temp)).status, 200, '임시 비번으로 로그인 (잠금도 풀림)');
+    });
+    await test('[손님 목록] 운영자만: 닉네임·가입일·리뷰 수, 비밀번호는 안 나감', async () => {
+      assert.equal((await call(X.admin, { cookie: gA, query: { what: 'guests' } })).status, 403);
+      const g = (await call(X.admin, { cookie: adm, query: { what: 'guests' } })).body.guests;
+      const a = g.find((x) => x.nickname === '가을');
+      assert.equal(a.reviews, 2); assert.ok(a.last); assert.ok(a.created_at);
+      assert.equal(g.find((x) => x.nickname === '겨울').reviews, 0);
+      assert.ok(!JSON.stringify(g).includes('pw_hash') && !JSON.stringify(g).includes('$2'), '비밀번호 해시 없음');
+    });
+    await test('[백업] 운영자만: 사케·리뷰·손님·오술·요청 전체, 비밀번호는 안 나감', async () => {
+      assert.equal((await call(X.admin, { cookie: gA, query: { what: 'backup' } })).status, 403);
+      const b = (await call(X.admin, { cookie: adm, query: { what: 'backup' } })).body;
+      assert.ok(b.exported_at); assert.equal(b.sakes.length, 2); assert.equal(b.ratings.length, 2);
+      assert.ok(Array.isArray(b.osul) && Array.isArray(b.requests));
+      assert.ok(b.guests.some((x) => x.nickname === '가을'));
+      assert.ok(!JSON.stringify(b).includes('pw_hash'), '비밀번호 해시 없음');
+      assert.equal((await call(X.admin, { cookie: adm, query: { what: 'zzz' } })).status, 400);
+    });
+
+    await test('[사케 요청] 손님이 남기고 내 것만 봄, 운영자는 모두 보고 완료 표시·삭제', async () => {
+      assert.equal((await call(X.request, { method: 'POST', cookie: gA, body: { name: '  ' } })).status, 400, '이름 필수');
+      assert.equal((await call(X.request, { method: 'POST', cookie: gA, body: { name: B(81) } })).status, 400);
+      assert.equal((await call(X.request, { method: 'POST', cookie: gA, body: { name: '가', note: B(201) } })).status, 400);
+      const a = await call(X.request, { method: 'POST', cookie: gA, body: { name: '쥬욘다이 본마루', note: '꼭 마셔보고 싶어요\n두 줄' } });
+      assert.equal(a.status, 200); assert.equal(a.body.request.note, '꼭 마셔보고 싶어요\n두 줄');
+      const b = await call(X.request, { method: 'POST', cookie: gB, body: { name: '니이가타 술' } });
+      assert.deepEqual((await call(X.request, { cookie: gA })).body.requests.map((r) => r.name), ['쥬욘다이 본마루'], '손님은 내 요청만');
+      assert.equal((await call(X.request, { cookie: adm })).body.requests.length, 2, '운영자는 모두');
+      assert.equal((await call(X.request, { method: 'PATCH', cookie: gA, body: { id: a.body.request.id, done: true } })).status, 403, '손님은 완료 표시 못 함');
+      assert.equal((await call(X.request, { method: 'PATCH', cookie: adm, body: { id: a.body.request.id, done: true } })).body.done, true);
+      assert.equal((await call(X.request, { cookie: gA })).body.requests[0].done, true, '손님도 처리됨을 봄');
+      assert.equal((await call(X.request, { method: 'DELETE', cookie: gA, query: { id: String(b.body.request.id) } })).status, 404, '남의 요청은 못 지움');
+      assert.equal((await call(X.request, { method: 'DELETE', cookie: gA, query: { id: String(a.body.request.id) } })).status, 200, '내 요청은 지움');
+      assert.equal((await call(X.request, { method: 'DELETE', cookie: adm, query: { id: String(b.body.request.id) } })).status, 200, '운영자는 아무거나');
+      assert.equal(store._db.requests.length, 0);
+      assert.equal((await call(X.request, {})).status, 401);
+    });
+    await test('[사케 요청] 처리 안 된 요청은 한 사람당 20개까지, 닉네임 바꾸면 요청도 따라가고 탈퇴하면 삭제', async () => {
+      for (let i = 0; i < 20; i++) await call(X.request, { method: 'POST', cookie: gB, body: { name: '술' + i } });
+      assert.equal((await call(X.request, { method: 'POST', cookie: gB, body: { name: '스물한 번째' } })).status, 400);
+      const ren = await call(X.auth, { method: 'POST', cookie: gB, body: { action: 'rename', nickname: '한겨울' } });
+      assert.equal(ren.status, 200);
+      assert.equal(store._db.requests.filter((q) => q.nickname === '한겨울').length, 20);
+      const c = cookieFrom(ren);
+      const tempPw = (await call(X.admin, { method: 'POST', cookie: adm, body: { action: 'reset', nickname: '한겨울' } })).body.temp;
+      assert.equal((await call(X.auth, { method: 'POST', cookie: c, body: { action: 'withdraw', password: tempPw } })).status, 200);
+      assert.equal(store._db.requests.length, 0, '탈퇴하면 요청도 삭제');
+    });
+
+    await test('[홈 오술] 오늘의 오술: 순서대로, 내가 기록한 수, 오늘 오술이 없으면 빈 목록', async () => {
+      assert.deepEqual((await call(X.home, { cookie: gA })).body.osul.items, []);
+      await call(X.osul, { method: 'PUT', cookie: adm, body: { date: TODAY, ids: [sid2, sid] } });
+      await call(X.osul, { method: 'PUT', cookie: adm, body: { date: '2026-01-01', ids: [sid] } });
+      const o = (await call(X.home, { cookie: gA })).body.osul;
+      assert.equal(o.date, TODAY);
+      assert.deepEqual(o.items.map((x) => [x.id, x.rated]), [[sid2, false], [sid, true]], '오늘 것만, 순서대로, 내 기록 여부');
+      assert.equal(o.done, 1);
+    });
+
+    /* ----- 화면 ----- */
+    setRoutes(X);
+    await test('[화면 온도·맛 변화] 내 기록 2개면 "내 맛 변화" 겹쳐 보기, 기록·리뷰에 온도, 새 기록에서 온도 고르기(다시 누르면 풀림)', async () => {
+      const b = browser({ jar: gA }); await b.settle(); await b.settle();
+      b.w.location.hash = '#/sake/' + sid; await b.settle(); await b.settle(); await b.settle();
+      assert.ok(b.$('#tastechg'), '내 맛 변화 패널');
+      assert.equal(b.$$('#tastechg .radar polygon.me').length, 1, '가장 최근 기록은 진한 보라');
+      assert.equal(b.$$('#tastechg .radar polygon.hist').length, 1, '예전 기록은 다른 색 선');
+      assert.match(b.$('#tastechg .legend').textContent, /차갑게/);
+      assert.match(b.$('#tastechg .legend').textContent, /\(최근\)/);
+      assert.ok(b.$$('#mylog .chip.tmpc').some((c) => c.textContent === '차갑게'), '내 기록에 온도');
+      assert.ok(b.$$('.review .chip.tmpc').some((c) => c.textContent === '차갑게'), '리뷰에 온도');
+      await b.click(b.btn('다시 마셨어요 · 새 기록'));
+      assert.equal(b.$$('.temps .tempbtn').length, 4);
+      assert.deepEqual(b.$$('.temps .tempbtn').map((x) => x.textContent), ['차갑게', '상온', '따뜻하게', '뜨겁게']);
+      assert.ok(b.$$('.temps .tempbtn').every((x) => x.getAttribute('aria-pressed') === 'false'), '새 기록은 온도 비어 있음');
+      const pick = (t) => b.click(b.$('.tempbtn[data-t="' + t + '"]'));
+      await pick('warm');
+      assert.equal(b.$('.tempbtn[data-t="warm"]').getAttribute('aria-pressed'), 'true');
+      await pick('warm');
+      assert.equal(b.$('.tempbtn[data-t="warm"]').getAttribute('aria-pressed'), 'false', '다시 누르면 풀림');
+      await pick('hot');
+      await b.click(b.$('[data-a="star"][data-n="3"]'));
+      await b.click(b.btn('저장하고 결과 보기')); await b.settle();
+      const last = store._db.ratings.filter((r) => r.nickname === '가을' && r.sake_id === sid).sort((x, y) => y.id - x.id)[0];
+      assert.equal(last.temp, 'hot');
+      assert.equal(b.$$('#tastechg .radar polygon.hist').length, 2, '기록 3개 → 예전 2개 + 최근 1개');
+      // 고치기 화면에는 저장된 온도가 눌려 있음
+      b.w.location.hash = '#/sake/' + sid + '/rate/' + last.id; await b.settle(); await b.settle();
+      assert.equal(b.$('.tempbtn[data-t="hot"]').getAttribute('aria-pressed'), 'true');
+      await b.click(b.btn('취소'));
+      assert.deepEqual(b.errors, []);
+    });
+    await test('[화면 홈 오술] 홈에 오늘의 오술 카드: 순서 번호, 기록 수, "오술 보기"', async () => {
+      const b = browser({ jar: gA }); await b.settle(); await b.settle(); await b.settle();
+      assert.ok(b.$('#homeosul'), '오늘의 오술 카드');
+      assert.match(b.$('#homeosul').textContent, /2병 중 1병 기록했어요/);
+      assert.deepEqual(b.$$('#homeosul .ordtag').map((x) => x.textContent), ['1', '2']);
+      assert.match(b.$$('#homeosul .fcard')[0].textContent, /두 번째 술/);
+      assert.ok(b.$('#homeosul').compareDocumentPosition(b.$('.hsec')) & 4, '레벨 카드 바로 아래, 다른 섹션보다 위');
+      await b.click(b.btn('오술 보기 ›'));
+      assert.equal(b.w.location.hash, '#/osul');
+    });
+    await test('[화면 사케 요청] 손님: MY·사케 목록에서 요청 화면, 이름 없으면 안내, 보내면 "대기 중", 삭제는 두 단계', async () => {
+      const b = browser({ jar: gA }); await b.settle(); await b.settle();
+      await b.tab('사케');
+      assert.ok(b.btn('찾는 사케가 없나요? 운영자에게 요청하기 ›'));
+      await b.tab('MY');
+      await b.click(b.$('[data-h="#/request"]'));
+      assert.equal(b.w.location.hash, '#/request');
+      await b.submit('#reqform');
+      assert.match(b.text(), /사케 이름을 입력해 주세요/);
+      b.type('#rqname', '쥬욘다이 본마루'); b.type('#rqnote', '모임에서 꼭!');
+      await b.submit('#reqform'); await b.settle();
+      assert.equal(b.$$('#reqlist .reqrow').length, 1);
+      assert.match(b.$('#reqlist').textContent, /쥬욘다이 본마루/); assert.match(b.$('#reqlist').textContent, /대기 중/);
+      assert.ok(!b.btn('처리 완료'), '손님에게는 처리 버튼 없음');
+      await b.click(b.btn('삭제'));
+      assert.match(b.text(), /지울까요\?/);
+      await b.click(b.btn('취소'));
+      assert.equal(store._db.requests.length, 1);
+      b.type('#rqname', '두 번째 요청'); await b.submit('#reqform'); await b.settle();
+      assert.equal(b.$$('#reqlist .reqrow').length, 2);
+      assert.deepEqual(b.errors, []);
+    });
+    await test('[화면 운영자] MY에 요청·손님 관리·백업 메뉴, 요청 처리 완료 → "처리됨"으로 이동', async () => {
+      const o = browser({ jar: adm }); await o.settle(); await o.settle();
+      await o.tab('MY');
+      assert.ok(o.$('[data-h="#/admin/requests"]') && o.$('[data-h="#/admin/guests"]') && o.$('[data-h="#/admin/backup"]'));
+      assert.ok(!o.$('[data-h="#/request"].menurow'), '운영자 MY에는 손님용 요청 메뉴 없음');
+      await o.click(o.$('[data-h="#/admin/requests"]')); await o.settle();
+      assert.match(o.text(), /대기 중 2/);
+      assert.match(o.$('#reqlist').textContent, /가을/);
+      await o.click(o.$$('#reqlist .reqrow').find((r) => /쥬욘다이/.test(r.textContent)).querySelector('[data-a="req-done"]'));
+      assert.match(o.text(), /대기 중 1/); assert.match(o.text(), /처리됨 1/);
+      assert.equal(store._db.requests.find((q) => q.name === '쥬욘다이 본마루').done, true);
+      assert.deepEqual(o.errors, []);
+    });
+    await test('[화면 운영자] 손님 관리: 비밀번호 초기화는 두 단계, 임시 비밀번호 한 번 보여주고 그 비번으로 로그인 됨', async () => {
+      const o = browser({ jar: adm }); await o.settle(); await o.settle();
+      o.w.location.hash = '#/admin/guests'; await o.settle(); await o.settle();
+      const row = () => o.$$('#guestlist .grow').find((r) => /가을/.test(r.textContent));
+      assert.match(row().textContent, /리뷰 3개/);
+      await o.click(row().querySelector('[data-a="reset-ask"]'));
+      await o.click(o.btn('취소'));
+      assert.ok(!o.$('.tempw'), '취소하면 아무 일 없음');
+      await o.click(row().querySelector('[data-a="reset-ask"]'));
+      await o.click(o.btn('초기화')); await o.settle();
+      const temp = o.$('.tempw').textContent;
+      assert.match(temp, /^[a-z2-9]{6}$/);
+      assert.match(o.text(), /가을님의 임시 비밀번호/);
+      assert.equal((await login('가을', temp)).status, 200);
+      assert.equal((await login('가을', 'fall1')).status, 401, '예전 비번은 안 됨');
+      await o.click(o.btn('확인했어요'));
+      assert.ok(!o.$('.tempw'), '확인하면 임시 비밀번호가 사라짐');
+      assert.deepEqual(o.errors, []);
+    });
+    await test('[화면 운영자] 데이터 백업: 리뷰 전체·사케 목록 엑셀, 원본 JSON 저장', async () => {
+      const o = browser({ jar: adm }); await o.settle(); await o.settle();
+      const saved = [];
+      o.w.SKAPP = { saveText: (n, t) => saved.push([n, t]) };
+      o.w.location.hash = '#/admin/backup'; await o.settle();
+      await o.click(o.btn('리뷰 전체 엑셀로 저장')); await o.settle();
+      await o.click(o.btn('사케 목록 엑셀로 저장')); await o.settle();
+      await o.click(o.btn('원본 데이터(JSON) 저장 · 복구용')); await o.settle();
+      assert.equal(saved.length, 3);
+      assert.match(saved[0][0], /^사케치북_리뷰전체_\d{4}-\d{2}-\d{2}\.csv$/);
+      const lines = saved[0][1].slice(1).split('\r\n');
+      assert.equal(saved[0][1].charCodeAt(0), 0xfeff, '한글 깨짐 방지');
+      assert.match(lines[0], /^리뷰 번호,사케,양조장,원산지,닉네임,마신 날짜,마신 온도,만족도 별점,단맛,산미,바디감,알콜감,여운,한줄평,작성일,고친 날$/);
+      assert.equal(lines.length, 1 + store._db.ratings.length);
+      assert.ok(lines.some((l) => /,가을,/.test(l) && /,뜨겁게,/.test(l)));
+      assert.match(saved[1][0], /사케목록/); assert.match(saved[1][1], /온도 테스트/);
+      const j = JSON.parse(saved[2][1]);
+      assert.equal(j.sakes.length, 2); assert.ok(!saved[2][1].includes('pw_hash'));
+      assert.deepEqual(o.errors, []);
+    });
+    await test('[화면 아이폰] 아이폰 사파리면 MY에 "홈 화면에 추가" 안내, 다른 기기는 안 보임', async () => {
+      const b = browser({ jar: gA }); await b.settle(); await b.settle();
+      await b.tab('MY'); await b.settle();
+      assert.ok(!b.$('.iostip'), '아이폰이 아니면 안내 없음');
+      Object.defineProperty(b.w.navigator, 'userAgent', { get: () => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Safari' });
+      await b.tab('홈'); await b.tab('MY'); await b.settle();
+      assert.ok(b.$('.iostip')); assert.match(b.$('.iostip').textContent, /홈 화면에 추가/);
+      Object.defineProperty(b.w.navigator, 'standalone', { get: () => true });
+      await b.tab('홈'); await b.tab('MY'); await b.settle();
+      assert.ok(!b.$('.iostip'), '이미 홈 화면 앱으로 열었으면 안내 안 함');
+    });
+    await test('[아이폰] index.html에 홈 화면 앱 설정(manifest·아이콘), manifest.json 내용', async () => {
+      const ix = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
+      assert.match(ix, /<link rel="manifest" href="\/manifest.json">/);
+      assert.match(ix, /apple-mobile-web-app-capable" content="yes"/);
+      assert.match(ix, /apple-touch-icon/);
+      const m = JSON.parse(fs.readFileSync(path.join(ROOT, 'public/manifest.json'), 'utf8'));
+      assert.equal(m.name, '사케치북'); assert.equal(m.display, 'standalone'); assert.equal(m.start_url, '/');
+      assert.ok(fs.existsSync(path.join(ROOT, 'public', m.icons[0].src)));
+    });
+  }
 
   /* ================= 배포 파일 점검 ================= */
   await test('[배포] 예시 데이터·임시 계정·운영자 비밀번호가 코드에 없음', async () => {
