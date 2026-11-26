@@ -42,7 +42,7 @@ Vercel 환경변수(값은 Vercel에만 있음, 사용자가 직접 입력·관�
 
 GitHub `main`에 올리면 Vercel이 1~2분 안에 자동 배포한다.
 
-**처음 한 번 (이 폴더에 `.git`이 없으면)** — 이 폴더는 파일만 복사된 상태라 git 연결부터 한다.
+**처음 한 번 (이 폴더에 `.git`이 없으면 — 2026-11-26에 연결 완료, 이제 평소 배포만 하면 됨)** — 이 폴더는 파일만 복사된 상태라 git 연결부터 한다.
 파일 내용은 그대로 두고 GitHub 기록만 연결하는 방법이다:
 
 ```bash
@@ -80,8 +80,7 @@ Windows에서 처음 push할 때: Git for Windows의 로그인 창(Git Credentia
   (SQL Editor는 Monaco 편집기라 `monaco.editor.getModels()[0].setValue(sql)`로 넣고 Run 버튼을 누르면 정확하다).
 - 규칙: 모든 표는 **RLS 켜고 정책 없음** (서버의 비밀 키만 접근). 함수는 `security definer` + `revoke execute … from public, anon, authenticated` + `grant … to service_role`.
 - 실행 후 확인 예: `select has_function_privilege('anon','public.set_osul(date,bigint[])','execute')` → false 여야 함.
-- 지금까지 실행한 것: update-2(술 설명), 3(별점), 4(반 별점), 5(MY·찜·닉네임 변경/탈퇴 함수), 6(오술) — 실행 완료.
-- ⚠️ **update-7(리뷰 여러 번 + 처음 쓴 날짜), update-8(마신 온도·로그인 잠금·사케 요청) — 아직 실행 안 함.** 배포 전에 **7 → 8 순서로** 꼭 실행. 실행 후 확인: `select count(*) from pg_constraint where conrelid='public.ratings'::regclass and contype='u'` → 0
+- 지금까지 실행한 것: update-2(술 설명), 3(별점), 4(반 별점), 5(MY·찜·닉네임 변경/탈퇴 함수), 6(오술), 7(리뷰 여러 번·처음 쓴 날짜), 8(마신 온도·로그인 잠금·사케 요청) — **모두 실행 완료**(7·8은 2026-11-26). 실행 후 확인: `select count(*) from pg_constraint where conrelid='public.ratings'::regclass and contype='u'` → 0
 
 표: `guests`(nickname, nick_key=소문자, pw_hash), `sakes`, `ratings`(같은 사케 여러 개 가능, v[5], comment, stars numeric(2,1), drank_on, created_at=처음 쓴 시각, updated_at=고친 시각), `wishes`, `osul`(day, sake_id, pos).
 표(update-8): `login_fails`(key='g:닉네임소문자' 또는 'admin', fails, locked_until), `requests`(nickname, name 80자, note 200자, done), `ratings.temp`(cold·room·warm·hot, 비워도 됨).
@@ -187,4 +186,4 @@ python preview/build-demo.py   # → preview/demo.html 을 브라우저로 열�
 7. Supabase 일시정지 복구 + 매일 깨우기 예약 작업
 8. 로컬 Claude Code 이어서 작업용으로 CLAUDE.md·preview 정리 (이 파일)
 9. 점검 + 개선 계획(`docs/improvement-plan.md`), 리뷰 여러 번·처음 쓴 날짜 유지·1000줄 나눠 받기 (update-7), 로그인 통합(ADMIN)·회원가입 버튼
-10. 마신 온도·내 맛 변화·홈 오늘의 오술·로그인 잠금·비번 초기화·백업·사케 요청·아이폰 홈 화면 (update-8) — **배포 전, 사용자 확인 대기**
+10. 마신 온도·내 맛 변화·홈 오늘의 오술·로그인 잠금·비번 초기화·백업·사케 요청·아이폰 홈 화면 (update-8) — 2026-11-26 배포 완료
